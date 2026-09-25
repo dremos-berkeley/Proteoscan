@@ -226,28 +226,28 @@ def _param(defaults, overrides: dict[str, Any]):
 
 
 def _ffc_slab(args):
-    """Run FeatureFinderCentroided on one m/z slab (worker process)."""
-    mzml_path, lo, hi, core_lo, core_hi, openms, omp = args
+    """Run FeatureFinderCentroided on one m/z slab (worker process).
+
+    args = (rts_seconds, [(mz, int) per spectrum], core_lo, core_hi, openms params, omp)
+    """
+    rts, peaks, core_lo, core_hi, openms, omp = args
     os.environ["OMP_NUM_THREADS"] = str(omp)
     import pyopenms as oms
 
-    exp = load_ms1(mzml_path)
     sub = oms.MSExperiment()
-    for s in exp:
-        mz, it = s.get_peaks()
-        m = (mz >= lo) & (mz < hi)
-        ns = oms.MSSpectrum(s)
-        ns.set_peaks((mz[m], it[m]))
-        sub.addSpectrum(ns)
-    del exp
+    for rt, (mz, it) in zip(rts, peaks):
+        sp = oms.MSSpectrum()
+        sp.setRT(float(rt))
+        sp.setMSLevel(1)
+        sp.set_peaks((mz, it))
+        sub.addSpectrum(sp)
     sub.updateRanges()
     ff = oms.FeatureFinderAlgorithmPicked()
     p = _param(ff.getDefaults(), openms)
     out = oms.FeatureMap()
     ff.run(sub, out, p, oms.FeatureMap())
     recs = _featuremap_records(out)
-    recs = [r for r in recs if core_lo <= r["mz"] < core_hi]
-    return recs
+    return [r for r in recs if core_lo <= r["mz"] < core_hi]
 
 
 def _featuremap_records(fm) -> list[dict[str, Any]]:
@@ -280,39 +280,50 @@ def _featuremap_records(fm) -> list[dict[str, Any]]:
     return recs
 
 
-def _run_centroided(mzml_path, openms, threads, slabs, slab_overlap):
-    """FFC in parallel over ``slabs`` overlapping m/z ranges (features kept by mono m/z)."""
-    exp = load_ms1(mzml_path)
-    lo, hi = np.inf, -np.inf
-    for s in exp:
-        if s.size():
-            mz, _ = s.get_peaks()
-            lo, hi = min(lo, float(mz.min())), max(hi, float(mz.max()))
-    lo, hi = max(0.0, lo - 0.01), hi + 0.01
-    del exp
-    edges = np.linspace(lo, hi, slabs + 1)
+def _run_centroided(exp, openms, threads, slabs, slab_overlap):
+    """FFC in parallel over ``slabs`` overlapping m/z slabs of equal peak count.
+
+    A feature is kept by the slab whose core holds its monoisotopic m/z; each slab extends
+    1.5 Th below and ``slab_overlap`` Th above its core so isotope envelopes (and FFC's
+    check for a -1 isotope) are complete.
+    """
+    rts = np.array([s.getRT() for s in exp])
+    spectra = [s.get_peaks() for s in exp]
+    allmz = np.concatenate([m for m, _ in spectra])
+    edges = np.quantile(allmz, np.linspace(0, 1, slabs + 1))
+    edges[0] -= 0.01
+    edges[-1] += 0.01
+    del allmz
     jobs = []
+    workers = max(1, min(slabs, threads))
+    omp = max(1, threads // workers)
     for i in range(slabs):
         a, b = edges[i], edges[i + 1]
-        # mono inside the core; its isotopes (and a -1 isotope check) inside the slab
-        jobs.append((str(mzml_path), max(0.0, a - 1.5), b + slab_overlap, a, b, openms,
-                     max(1, threads // slabs)))
+        lo, hi = a - 1.5, b + slab_overlap
+        pk = []
+        for mz, it in spectra:
+            j0, j1 = np.searchsorted(mz, [lo, hi])
+            pk.append((mz[j0:j1].astype(np.float64), it[j0:j1].astype(np.float32)))
+        jobs.append((rts, pk, a, b, openms, omp))
+    del spectra
     recs: list[dict[str, Any]] = []
-    workers = max(1, min(slabs, threads))
     if workers == 1:
         for j in jobs:
             recs += _ffc_slab(j)
-    else:
-        # spawn (not fork): each worker must initialise OpenMP with its own thread count
-        old = os.environ.get("OMP_NUM_THREADS")
-        os.environ["OMP_NUM_THREADS"] = str(max(1, threads // workers))
-        try:
-            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
-                for r in ex.map(_ffc_slab, jobs):
-                    recs += r
-        finally:
-            if old is not None:
-                os.environ["OMP_NUM_THREADS"] = old
+        return recs
+    # spawn (not fork): each worker must initialise OpenMP with its own thread count
+    old = os.environ.get("OMP_NUM_THREADS")
+    os.environ["OMP_NUM_THREADS"] = str(omp)
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
+            # largest slabs first for load balance
+            order = sorted(range(slabs), key=lambda i: -sum(len(m) for m, _ in jobs[i][1]))
+            futs = [ex.submit(_ffc_slab, jobs[i]) for i in order]
+            for f in futs:
+                recs += f.result()
+    finally:
+        if old is not None:
+            os.environ["OMP_NUM_THREADS"] = old
     return recs
 
 
@@ -515,7 +526,7 @@ _RAW_COLS = ["mz", "charge", "rt_model", "hull_rt_begin", "hull_rt_end", "mono_r
 
 def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathLike | None = None,
                     algorithm: str = "centroided", openms: dict[str, Any] | None = None,
-                    threads: int = 16, slabs: int = 16, slab_overlap: float = 6.0,
+                    threads: int = 16, slabs: int = 32, slab_overlap: float = 6.0,
                     rt_range: str = "hull", xic_ppm: float = 5.0, area_isotopes: int = 2,
                     area_scale: float = 1.0, apex_from: str = "xic", boundary: str = "walk",
                     boundary_isotopes: int = 2, boundary_frac: float = 0.1,
@@ -549,14 +560,14 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     if raw_cache is not None and Path(raw_cache).exists():
         df = pd.read_parquet(raw_cache)
     else:
+        exp = load_ms1(mzml_path)
+        ms1 = _ms1_arrays(exp)  # before the run: FeatureFinderMultiplex empties the map
         if algorithm == "centroided":
-            recs = _run_centroided(mzml_path, op, threads, slabs, slab_overlap)
+            recs = _run_centroided(exp, op, threads, slabs, slab_overlap)
         else:
-            exp = load_ms1(mzml_path)
-            ms1 = _ms1_arrays(exp)  # before the run: FeatureFinderMultiplex empties the map
             fm = _run_metabo(exp, op) if algorithm == "metabo" else _run_multiplex(exp, op)
-            del exp
             recs = _featuremap_records(fm)
+        del exp
         df = pd.DataFrame(recs, columns=_RAW_COLS)
         if raw_cache is not None:
             Path(raw_cache).parent.mkdir(parents=True, exist_ok=True)

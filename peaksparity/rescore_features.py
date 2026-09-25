@@ -50,57 +50,102 @@ def _pearson(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def ms2pip_correlations(df: pd.DataFrame, mzml: str | Path, model: str = "HCD2021",
-                        ms2_tolerance: float = 0.5, processes: int = 8) -> pd.DataFrame:
-    """MS2PIP-based features aligned with df (index order preserved):
-    ms2_corr (Pearson on log2 intensities of all b/y ions), ms2_cos (cosine on linear
-    intensities), ms2_frac_pred_found (fraction of predicted ions with rel. intensity >= 5%
-    that are observed). MS2PIP returns results in spectrum order and, in v4.2, its
-    `correlation` field is not reliably attached to the right PSM, so we recompute from the
-    observed/predicted intensity vectors, which are attached correctly."""
-    from ms2pip.core import correlate
-    psms = to_psmlist(df)
-    results = correlate(psms, spectrum_file=str(mzml), spectrum_id_pattern=r"scan=(\d+)",
-                        compute_correlations=False, model=model, ms2_tolerance=ms2_tolerance,
-                        ms2_tolerance_mode="Da", processes=processes)
-    corr = np.zeros(len(df)); cos = np.zeros(len(df)); frac = np.zeros(len(df))
-    longest_b = np.zeros(len(df)); longest_y = np.zeros(len(df)); n_obs = np.zeros(len(df)); cov_both = np.zeros(len(df))
-    for res in results:
-        if res is None or res.observed_intensity is None or res.predicted_intensity is None:
-            continue
-        i = int(res.psm_index)
-        obs = np.concatenate([np.asarray(v, dtype=float) for v in res.observed_intensity.values()])
-        pred = np.concatenate([np.asarray(v, dtype=float) for v in res.predicted_intensity.values()])
-        corr[i] = _pearson(obs, pred)
-        o_lin = np.power(2.0, obs) - 0.001; p_lin = np.power(2.0, pred) - 0.001
-        o_lin = np.clip(o_lin, 0, None); p_lin = np.clip(p_lin, 0, None)
-        denom = np.linalg.norm(o_lin) * np.linalg.norm(p_lin)
-        cos[i] = float(np.dot(o_lin, p_lin) / denom) if denom > 0 else 0.0
-        strong = p_lin >= 0.05 * (p_lin.max() if p_lin.max() > 0 else 1)
-        frac[i] = float((o_lin[strong] > 0).mean()) if strong.any() else 0.0
-        # ion-series evidence (PEAKS-style "positional" support): observed = log2 intensity above the floor
-        ob = np.asarray(res.observed_intensity.get("b", []), dtype=float) > -9.9
-        oy = np.asarray(res.observed_intensity.get("y", []), dtype=float) > -9.9
-        longest_b[i] = _longest_run(ob); longest_y[i] = _longest_run(oy)
-        n_obs[i] = int(ob.sum() + oy.sum())
-        if len(ob) and len(oy):
-            # residue k (1..n) is covered by a b-ion boundary on its left (b_{k-1}) or right (b_k), same for y
-            n = len(ob) + 1
-            b_bound = np.concatenate([[True], ob, [True]])   # boundaries 0..n
-            y_bound = np.concatenate([[True], oy[::-1], [True]])
-            covered = [(b_bound[k - 1] or y_bound[k - 1]) and (b_bound[k] or y_bound[k]) for k in range(1, n + 1)]
-            cov_both[i] = float(np.mean(covered))
-    return pd.DataFrame({"ms2_corr": corr, "ms2_cos": cos, "ms2_frac_pred_found": frac,
-                         "longest_b_obs": longest_b, "longest_y_obs": longest_y, "n_ions_obs": n_obs,
-                         "residue_coverage": cov_both}, index=df.index)
-
-
 def _longest_run(mask: np.ndarray) -> int:
     best = cur = 0
     for v in mask:
         cur = cur + 1 if v else 0
         best = max(best, cur)
     return best
+
+
+class SpectrumStore:
+    """Random access to MS2 peak lists of an mzML by raw scan number (pyopenms on-disc)."""
+
+    def __init__(self, mzml: str | Path):
+        import pyopenms as oms
+        self._od = oms.OnDiscMSExperiment()
+        if not self._od.openFile(str(mzml)):
+            raise FileNotFoundError(mzml)
+        meta = self._od.getMetaData()
+        self._index = {}
+        for i in range(meta.getNrSpectra()):
+            m = re.search(r"scan=(\d+)", meta[i].getNativeID())
+            if m and meta[i].getMSLevel() == 2:
+                self._index.setdefault(int(m.group(1)), i)
+
+    def peaks(self, scan: int):
+        i = self._index.get(int(scan))
+        if i is None:
+            return None
+        mz, it = self._od.getSpectrum(i).get_peaks()
+        return np.asarray(mz, dtype=float), np.asarray(it, dtype=float)
+
+
+def observed_log2(theo_mz: np.ndarray, mz: np.ndarray, it: np.ndarray, tol: float, tic: float) -> np.ndarray:
+    """MS2PIP-style observed targets: log2(max intensity within +/-tol of each ion / TIC + 0.001)."""
+    lo = np.searchsorted(mz, theo_mz - tol, side="left")
+    hi = np.searchsorted(mz, theo_mz + tol, side="right")
+    out = np.full(len(theo_mz), 0.001)
+    for k in range(len(theo_mz)):
+        if hi[k] > lo[k]:
+            out[k] += it[lo[k]:hi[k]].max() / tic
+    return np.log2(out)
+
+
+def ms2pip_correlations(df: pd.DataFrame, mzml: str | Path, model: str = "HCD2021",
+                        ms2_tolerance: float = 0.5, processes: int = 8) -> pd.DataFrame:
+    """Predicted-vs-observed fragment features aligned with df.
+    Predictions and theoretical m/z come from MS2PIP's predict_batch (deterministic and
+    correctly attached to each PSM); the observed intensities are extracted here, because in
+    ms2pip 4.2 `correlate` attaches observed/predicted vectors inconsistently when several
+    PSMs share a spectrum.
+    Columns: ms2_corr (Pearson on log2 targets over all b/y ions), ms2_cos (cosine on linear
+    intensities), ms2_frac_pred_found, longest_b_obs, longest_y_obs, n_ions_obs, residue_coverage."""
+    from ms2pip.core import predict_batch
+    psms = to_psmlist(df)
+    preds = predict_batch(psms, model=model, processes=processes)
+    store = SpectrumStore(mzml)
+    n = len(df)
+    corr = np.zeros(n); cos = np.zeros(n); frac = np.zeros(n)
+    longest_b = np.zeros(n); longest_y = np.zeros(n); n_obs = np.zeros(n); cov_both = np.zeros(n)
+    scans = df["scan"].to_numpy()
+    order = np.argsort(scans, kind="stable")
+    cache_scan, cache = None, None
+    by_index = {r.psm_index: r for r in preds}
+    for i in order:
+        r = by_index.get(int(i))
+        if r is None or r.predicted_intensity is None or r.theoretical_mz is None:
+            continue
+        sc = int(scans[i])
+        if sc != cache_scan:
+            cache_scan, cache = sc, store.peaks(sc)
+        if cache is None or len(cache[0]) == 0:
+            continue
+        mz, it = cache
+        tic = float(it.sum()) or 1.0
+        ions = [k for k in ("b", "y") if k in r.predicted_intensity]
+        pred = np.concatenate([np.asarray(r.predicted_intensity[k], dtype=float) for k in ions])
+        theo = np.concatenate([np.asarray(r.theoretical_mz[k], dtype=float) for k in ions])
+        obs = observed_log2(theo, mz, it, ms2_tolerance, tic)
+        corr[i] = _pearson(obs, pred)
+        o_lin = np.clip(np.power(2.0, obs) - 0.001, 0, None); p_lin = np.clip(np.power(2.0, pred) - 0.001, 0, None)
+        denom = np.linalg.norm(o_lin) * np.linalg.norm(p_lin)
+        cos[i] = float(np.dot(o_lin, p_lin) / denom) if denom > 0 else 0.0
+        strong = p_lin >= 0.05 * (p_lin.max() if p_lin.max() > 0 else 1)
+        frac[i] = float((o_lin[strong] > 0).mean()) if strong.any() else 0.0
+        nb = len(r.predicted_intensity.get("b", []))
+        ob = obs[:nb] > -9.9; oy = obs[nb:] > -9.9
+        longest_b[i] = _longest_run(ob); longest_y[i] = _longest_run(oy)
+        n_obs[i] = int(ob.sum() + oy.sum())
+        if nb and len(oy):
+            nres = nb + 1
+            b_bound = np.concatenate([[True], ob, [True]])
+            y_bound = np.concatenate([[True], oy[::-1], [True]])
+            covered = [(b_bound[k - 1] or y_bound[k - 1]) and (b_bound[k] or y_bound[k]) for k in range(1, nres + 1)]
+            cov_both[i] = float(np.mean(covered))
+    return pd.DataFrame({"ms2_corr": corr, "ms2_cos": cos, "ms2_frac_pred_found": frac,
+                         "longest_b_obs": longest_b, "longest_y_obs": longest_y, "n_ions_obs": n_obs,
+                         "residue_coverage": cov_both}, index=df.index)
 
 
 def deeplc_predictions(df: pd.DataFrame, calibrate_on: pd.Series | None = None) -> np.ndarray:
