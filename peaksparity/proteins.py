@@ -20,7 +20,7 @@ Peptide -> protein mapping
 Protein -10lgP
     sum_k s_k / k over the protein's distinct residue sequences (not peptidoforms: all PTM
     forms and positions of one sequence count once, at their best score), s_1 >= s_2 >= ...,
-    in double precision, reported as a Java float.  (This differs from the published rule,
+    accumulated in float32.  (This differs from the published rule,
     which counts different PTM sets separately; the exports show all PTM forms collapse.)
 
 Grouping
@@ -72,6 +72,8 @@ __all__ = [
     "group_proteins",
     "infer_proteins",
     "read_mzid_psm_scores",
+    "protein_peptide_mass",
+    "MONO_RESIDUE_5",
 ]
 
 #: average residue masses PEAKS uses (fitted on 1336 exported proteins; the classic
@@ -331,9 +333,14 @@ def digest_positions(fasta, peptides, enzyme=DEFAULT_ENZYME):
 
 def protein_score(scores):
     """PEAKS protein -10lgP from the best scores of its distinct peptide sequences:
-    sum_k s_k / k with s_1 >= s_2 >= ... (double precision)."""
-    v = sorted((float(s) for s in scores), reverse=True)
-    return float(sum(s / (k + 1) for k, s in enumerate(v)))
+    sum_k s_k / k with s_1 >= s_2 >= ..., evaluated in float32 exactly as
+    ``t = (float)(t + (float)(s_k / k))`` (reproduces all 1336 reference values bit for bit;
+    double precision differs in the last printed digit for ~18% of proteins)."""
+    f32 = np.float32
+    t = f32(0.0)
+    for k, s in enumerate(sorted((float(x) for x in scores), reverse=True), start=1):
+        t = f32(t + f32(f32(s) / f32(k)))
+    return float(t)
 
 
 def read_mzid_psm_scores(path):
@@ -367,3 +374,412 @@ def read_mzid_psm_scores(path):
             rows.append((pep, rt, sc))
         el.clear()
     return pd.DataFrame(rows, columns=["Peptide", "RT", "score"])
+
+
+# --------------------------------------------------------------------------
+# Peptide mass as written in db.protein-peptides.csv
+# --------------------------------------------------------------------------
+
+#: monoisotopic residue masses with 5 decimals (the table that reproduces the "Mass" column of
+#: db.protein-peptides.csv for all 3932 distinct reference peptides)
+MONO_RESIDUE_5 = {
+    "A": "71.03711", "C": "103.00919", "D": "115.02694", "E": "129.04259", "F": "147.06841",
+    "G": "57.02146", "H": "137.05891", "I": "113.08406", "L": "113.08406", "K": "128.09496",
+    "M": "131.04049", "N": "114.04293", "P": "97.05276", "Q": "128.05858", "R": "156.10111",
+    "S": "87.03203", "T": "101.04768", "V": "99.06841", "W": "186.07931", "Y": "163.06333",
+    "U": "150.95364", "O": "237.14773",
+}
+_MONO5 = None
+
+
+def _exact_delta(delta):
+    """Exact monoisotopic delta for a PEAKS 2-decimal delta (15.99 -> 15.994915)."""
+    from .seqnorm import MOD_MASSES
+
+    r = round(delta, 2)
+    best = None
+    for v in MOD_MASSES.values():
+        if round(v, 2) == r:
+            if best is None or abs(v - delta) < abs(best - delta):
+                best = v
+    return delta if best is None else best
+
+
+def protein_peptide_mass(peptide):
+    """"Mass" of db.protein-peptides.csv: exact decimal sum of 5-decimal residue masses,
+    water 18.01056 and exact modification deltas, rounded HALF_DOWN to 4 decimals.
+
+    (db.peptides.csv prints the float32 search mass instead, so the two files disagree in
+    the 4th decimal for ~30% of peptides; this reproduces the protein-peptides value.)"""
+    from decimal import ROUND_HALF_DOWN, Decimal
+
+    global _MONO5
+    if _MONO5 is None:
+        _MONO5 = {k: Decimal(v) for k, v in MONO_RESIDUE_5.items()}
+    stripped, mods = parse(peptide)
+    total = Decimal("18.01056")
+    for a in stripped:
+        total += _MONO5.get(a, Decimal(0))
+    for _pos, d in mods:
+        total += Decimal(repr(_exact_delta(d)))
+    return float(total.quantize(Decimal("0.0001"), rounding=ROUND_HALF_DOWN))
+
+
+# --------------------------------------------------------------------------
+# Grouping
+# --------------------------------------------------------------------------
+
+
+def group_proteins(prot_fams, dom_fams, order):
+    """Greedy PEAKS grouping.
+
+    ``prot_fams``: {protein: set of peptide families}; ``dom_fams``: {protein: frozenset of
+    families with score >= T}; ``order``: proteins in processing order.
+
+    Proteins are processed in ``order`` (PEAKS: most supporting peptide rows first).  An
+    unassigned protein X opens a new group; every still unassigned protein Y whose
+    families (score >= T) are a subset of X's joins X's group.  Y is Top when its set equals
+    X's (mutual domination; e.g. ACTB/ACTG).  Returns (group_of, groups, top) with groups a
+    list of member lists (leader first) numbered in creation order.
+    """
+    by_fam = defaultdict(list)
+    for p, fs in prot_fams.items():
+        for f in fs:
+            by_fam[f].append(p)
+    rank = {p: r for r, p in enumerate(order)}
+    group_of, groups, top = {}, [], {}
+    for x in order:
+        if x in group_of:
+            continue
+        g = len(groups)
+        group_of[x] = g
+        members = [x]
+        top[x] = True
+        dx = dom_fams[x]
+        cand = set()
+        for f in prot_fams[x]:
+            cand.update(by_fam[f])
+        for y in sorted(cand, key=rank.__getitem__):
+            if y in group_of:
+                continue
+            dy = dom_fams[y]
+            if dy <= dx:
+                group_of[y] = g
+                members.append(y)
+                top[y] = dy == dx
+        groups.append(members)
+    return group_of, groups, top
+
+
+# --------------------------------------------------------------------------
+# Main entry point
+# --------------------------------------------------------------------------
+
+
+def _col(df, *names):
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+
+def _sample_from_columns(df):
+    for c in df.columns:
+        if c.startswith("Area ") and not c.endswith(" Mod"):
+            return c[5:]
+    return "Sample 1"
+
+
+def _text(v):
+    if v is None:
+        return ""
+    try:
+        if v != v:
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(v)
+
+
+def infer_proteins(peptides_df, fasta_path, score_threshold=15.0, min_unique=1, *,
+                   psms_df=None, features_df=None, sample=None, enzyme=DEFAULT_ENZYME,
+                   mapping="fasta", score_col=None, domination_threshold=None,
+                   feature_min_psm_score=20.0, return_details=False):
+    """PEAKS-style protein inference.
+
+    Parameters
+    ----------
+    peptides_df : DataFrame in the ``db.peptides.csv`` layout (one row per peptidoform).
+        Required: ``Peptide`` and ``-10LgP`` (or ``-10lgP``).  Used when present: ``Mass``,
+        ``Length``, ``ppm``, ``m/z``, ``z``, ``RT``, ``Scan``, ``Source File``,
+        ``Area <sample>``, ``#Feature``, ``PTM``, ``AScore``, ``Found By``, ``Accession``.
+    fasta_path : FASTA path or :class:`ProteinDB` (target proteins; ``#DECOY#`` entries are
+        skipped).
+    score_threshold : protein -10lgP filter (PEAKS default 15); also the domination
+        threshold T unless ``domination_threshold`` is given.
+    min_unique : minimum #Unique per reported protein.
+    psms_df : optional ``db.psms.csv``-style table (Peptide, -10LgP, Feature Id, Area) for
+        #Spec (PSM rows per peptide) and for the feature-level Area.
+    features_df : optional ``<sample>.db.features.csv`` (Feature Id, Area) with unrounded
+        feature areas; without it the (rounded) PSM or peptide areas are summed.
+    sample : sample name for the per-sample columns (default: taken from the peptides'
+        ``Area <name>`` column, else "Sample 1").
+    enzyme : :class:`Enzyme` deciding which occurrences count (default semi-specific
+        trypsin, 2 missed cleavages); None = any occurrence.
+    mapping : "fasta" (map by sequence) or "accession" (use the peptides' ``Accession``
+        column, ``:``/``;`` separated, as the protein list; positions still from the FASTA).
+    score_col : column with full-precision peptide scores (default: ``score`` if present,
+        else the -10LgP column).  PEAKS's CSV rounds -10lgP to 2 decimals, which limits the
+        protein -10lgP to about +-0.01.
+    feature_min_psm_score : a feature counts for a peptide's protein-level Area / #Feature
+        only if it carries a PSM with at least this -10lgP (PEAKS: 20, see
+        docs/PROTEIN_INFERENCE.md).
+    return_details : also return a dict with the unfiltered groups and per-protein data.
+
+    Returns
+    -------
+    (proteins_df, protein_peptides_df) with exactly the PEAKS columns, or
+    (proteins_df, protein_peptides_df, details) with ``return_details``.
+    """
+    db = read_protein_db(fasta_path)
+    T = score_threshold if domination_threshold is None else domination_threshold
+    pep = peptides_df.reset_index(drop=True)
+    if sample is None:
+        sample = _sample_from_columns(pep)
+    lgp_col = _col(pep, "-10LgP", "-10lgP")
+    if score_col is None:
+        score_col = "score" if "score" in pep.columns else lgp_col
+    if score_col is None:
+        raise ValueError("peptides_df needs a -10LgP (or score) column")
+    peptides = pep["Peptide"].astype(str).tolist()
+    scores = pep[score_col].astype(float).to_numpy()
+    stripped = [parse(p)[0] for p in peptides]
+    fams = [s.replace("I", "L") for s in stripped]
+    n = len(pep)
+
+    # ---- peptide -> protein occurrences ----------------------------------
+    if mapping == "fasta":
+        hits = map_peptides(db, set(stripped), enzyme)
+    elif mapping == "accession":
+        acc_col = _col(pep, "Accession")
+        if acc_col is None:
+            raise ValueError("mapping='accession' needs an Accession column")
+        hits = {}
+        for s, a in zip(stripped, pep[acc_col].astype(str)):
+            if s in hits:
+                continue
+            lst = []
+            for acc in re.split(r"[:;]", a):
+                i = db.index.get(acc.strip())
+                if i is None:
+                    continue
+                seq = db.sequence[i]
+                st = -1
+                pos = seq.find(s)
+                while pos >= 0:
+                    if enzyme is None or enzyme.valid(seq, pos, len(s)):
+                        st = pos
+                        break
+                    pos = seq.find(s, pos + 1)
+                if st < 0:
+                    st = seq.find(s)
+                exact = st >= 0
+                if not exact:
+                    st = seq.replace("I", "L").find(s.replace("I", "L"))
+                if st >= 0:
+                    lst.append((i, st, exact))
+            hits[s] = sorted(lst)
+    else:
+        raise ValueError("mapping must be 'fasta' or 'accession'")
+
+    fam_best = defaultdict(float)
+    for f, sc in zip(fams, scores):
+        fam_best[f] = max(fam_best[f], sc)
+
+    # protein -> {row: start}; families; exact families
+    prot_rows = defaultdict(dict)
+    prot_fams = defaultdict(set)
+    il_only = defaultdict(dict)  # protein -> {fam: start} for families matched only by I/L
+    for r, s in enumerate(stripped):
+        for i, st, exact in hits.get(s, ()):
+            prot_fams[i].add(fams[r])
+            if exact:
+                prot_rows[i][r] = st
+            else:
+                il_only[i].setdefault(fams[r], []).append((r, st))
+    for i, d in il_only.items():
+        have = {fams[r] for r in prot_rows[i]}
+        for f, lst in d.items():
+            if f not in have:  # no verbatim variant among the input peptides
+                for r, st in lst:
+                    prot_rows[i][r] = st
+
+    proteins = sorted(prot_fams)
+    pscore, nrows = {}, {}
+    for i in proteins:
+        best = {}
+        for r in prot_rows[i]:
+            best[stripped[r]] = max(best.get(stripped[r], -np.inf), scores[r])
+        pscore[i] = protein_score(best.values())
+        nrows[i] = len(prot_rows[i])
+    dom = {i: frozenset(f for f in prot_fams[i] if fam_best[f] >= T) for i in proteins}
+    order = sorted(proteins, key=lambda i: (-nrows[i], -pscore[i], db.accession[i]))
+    group_of, groups, top = group_proteins(prot_fams, dom, order)
+
+    fam_groups = defaultdict(set)
+    for i in proteins:
+        for f in prot_fams[i]:
+            fam_groups[f].add(group_of[i])
+    unique_fam = {f: len(g) == 1 for f, g in fam_groups.items()}
+
+    # ---- PSM counts and features ------------------------------------------
+    n_spec = np.ones(n)
+    pep_features = [None] * n
+    feat_area = {}
+    if psms_df is not None and len(psms_df):
+        cnt = psms_df.groupby("Peptide").size()
+        n_spec = pep["Peptide"].map(cnt).fillna(0).to_numpy(float)
+        if "Feature Id" in psms_df.columns:
+            psc = _col(psms_df, "-10LgP", "-10lgP")
+            ok = psms_df["Feature Id"].fillna(0).astype(int) > 0
+            if psc is not None and feature_min_psm_score is not None:
+                ok &= psms_df[psc].astype(float) >= feature_min_psm_score
+            sub = psms_df[ok]
+            fmap = sub.groupby("Peptide")["Feature Id"].agg(lambda v: sorted(set(int(x) for x in v)))
+            pep_features = [fmap.get(p, []) for p in peptides]
+            if features_df is not None and len(features_df):
+                feat_area = dict(zip(features_df["Feature Id"].astype(int),
+                                     features_df["Area"].astype(float)))
+            if "Area" in sub.columns:
+                for fid, a in zip(sub["Feature Id"].astype(int), sub["Area"].astype(float)):
+                    if fid not in feat_area and a == a:
+                        feat_area[fid] = a
+    area_col = _col(pep, f"Area {sample}", "Area")
+
+    def pep_area(r):
+        """(area, n_features) for protein-peptides."""
+        fs = pep_features[r]
+        if fs is None:
+            a = pep[area_col].iloc[r] if area_col else np.nan
+            nf = pep["#Feature"].iloc[r] if "#Feature" in pep.columns else (0 if a != a else 1)
+            return a, nf
+        if not fs:
+            return np.nan, 0
+        return float(np.float32(sum(np.float32(feat_area.get(f, 0.0)) for f in fs))), len(fs)
+
+    # ---- per-protein summary -----------------------------------------------
+    ptm_col = _col(pep, "PTM")
+    rows_out, pp_out = [], []
+    kept = {}
+    for i in proteins:
+        seq = db.sequence[i]
+        rows = prot_rows[i]
+        se = {(st + 1, st + len(stripped[r])) for r, st in rows.items()}
+        uniq_rows = [r for r in rows if unique_fam[fams[r]]]
+        use = {(rows[r] + 1, rows[r] + len(stripped[r])) for r in uniq_rows}
+        n_unique = len(use)
+        if pscore[i] < score_threshold or n_unique < min_unique or not rows:
+            continue
+        cov = np.zeros(len(seq), bool)
+        for s0, e0 in se:
+            cov[s0 - 1:e0] = True
+        coverage = 100.0 * cov.mean() if len(seq) else 0.0
+        spec = float(sum(n_spec[r] for r in rows))
+        # Area: distinct features of the unique supporting peptides (float32 sum)
+        if all(pep_features[r] is not None for r in uniq_rows):
+            fs = sorted({f for r in uniq_rows for f in pep_features[r]})
+            area = float(np.float32(sum(np.float32(feat_area.get(f, 0.0)) for f in fs))) if fs else np.nan
+        else:
+            vals = [pep_area(r)[0] for r in uniq_rows]
+            vals = [v for v in vals if v == v]
+            area = float(np.float32(sum(vals))) if vals else np.nan
+        ptms = set()
+        if ptm_col:
+            for r in rows:
+                for t in _text(pep[ptm_col].iloc[r]).split(";"):
+                    if t.strip():
+                        ptms.add(t.strip())
+        kept[i] = True
+        rows_out.append({
+            "Protein Group": group_of[i] + 1,
+            "Top": bool(top[i]),
+            "Accession": db.accession[i],
+            "Gene": db.gene[i],
+            "-10LgP": pscore[i],
+            "Coverage(%)": coverage,
+            f"Coverage(%) {sample}": coverage,
+            "#Peptides": len(se),
+            f"Area {sample}": area,
+            "#Unique": n_unique,
+            f"#Spec {sample}": spec,
+            "PTM": "; ".join(sorted(ptms)),
+            "Average Mass": average_mass(seq),
+            "Description": db.description[i],
+        })
+        for r, st in sorted(rows.items(), key=lambda kv: (kv[1], peptides[kv[0]])):
+            a, nf = pep_area(r)
+            L = len(stripped[r])
+
+            def g(c, default=""):
+                cc = _col(pep, c)
+                return pep[cc].iloc[r] if cc else default
+
+            pp_out.append({
+                "Protein Group": group_of[i] + 1,
+                "Accession": db.accession[i],
+                "Gene": db.gene[i],
+                "Top": bool(top[i]),
+                "Peptide": peptides[r],
+                "Extended Peptide": extended_peptide(peptides[r], seq, st, L),
+                "Unique": bool(unique_fam[fams[r]]),
+                "-10LgP": float(pep[lgp_col].iloc[r]) if lgp_col else float(scores[r]),
+                "Mass": protein_peptide_mass(peptides[r]),
+                "Length": L,
+                "ppm": g("ppm", np.nan),
+                "m/z": g("m/z", np.nan),
+                "z": g("z", pd.NA),
+                "RT": g("RT", np.nan),
+                "Scan": g("Scan", pd.NA),
+                "Source File": _text(g("Source File")),
+                f"Area {sample}": a,
+                "#Feature": nf,
+                "Start": st + 1,
+                "End": st + L,
+                "PTM": _text(g("PTM")),
+                "AScore": _text(g("AScore")),
+                "Found By": _text(g("Found By", "DB Search")),
+            })
+
+    pcols = canonical_columns("proteins", (sample,))
+    ppcols = canonical_columns("protein_peptides", (sample,))
+    proteins_df = pd.DataFrame(rows_out, columns=pcols)
+    if len(proteins_df):
+        proteins_df = proteins_df.sort_values(
+            ["Protein Group", "Top", "-10LgP", "Accession"],
+            ascending=[True, False, False, True], kind="mergesort").reset_index(drop=True)
+    prot_rank = {a: k for k, a in enumerate(proteins_df["Accession"])}
+    pp_df = pd.DataFrame(pp_out, columns=ppcols)
+    if len(pp_df):
+        pp_df["_r"] = pp_df["Accession"].map(prot_rank)
+        pp_df = pp_df.sort_values(["_r", "Start", "End", "Peptide"], kind="mergesort") \
+                     .drop(columns="_r").reset_index(drop=True)
+    for c in ("Protein Group", "#Peptides", "#Unique"):
+        proteins_df[c] = proteins_df[c].astype("Int64")
+    for c in ("Protein Group", "Length", "Start", "End", "#Feature", "z", "Scan"):
+        pp_df[c] = pd.to_numeric(pp_df[c], errors="coerce").astype("Int64")
+    proteins_df["Top"] = proteins_df["Top"].astype(bool)
+    pp_df["Top"] = pp_df["Top"].astype(bool)
+    pp_df["Unique"] = pp_df["Unique"].astype(bool)
+    if not return_details:
+        return proteins_df, pp_df
+    details = {
+        "db": db,
+        "groups": [[db.accession[i] for i in mem] for mem in groups],
+        "group_of": {db.accession[i]: g + 1 for i, g in group_of.items()},
+        "top": {db.accession[i]: t for i, t in top.items()},
+        "score": {db.accession[i]: s for i, s in pscore.items()},
+        "n_rows": {db.accession[i]: v for i, v in nrows.items()},
+        "unique_family": unique_fam,
+        "order": [db.accession[i] for i in order],
+    }
+    return proteins_df, pp_df, details
