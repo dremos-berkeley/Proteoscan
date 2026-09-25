@@ -545,7 +545,7 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     op.update({k.replace("__", ":"): v for k, v in params.items()})
     os.environ["OMP_NUM_THREADS"] = str(threads)  # effective only if pyopenms not yet loaded
 
-    exp = None
+    ms1 = None
     if raw_cache is not None and Path(raw_cache).exists():
         df = pd.read_parquet(raw_cache)
     else:
@@ -553,7 +553,9 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
             recs = _run_centroided(mzml_path, op, threads, slabs, slab_overlap)
         else:
             exp = load_ms1(mzml_path)
+            ms1 = _ms1_arrays(exp)  # before the run: FeatureFinderMultiplex empties the map
             fm = _run_metabo(exp, op) if algorithm == "metabo" else _run_multiplex(exp, op)
+            del exp
             recs = _featuremap_records(fm)
         df = pd.DataFrame(recs, columns=_RAW_COLS)
         if raw_cache is not None:
@@ -567,10 +569,8 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     else:
         df["rt_begin"], df["rt_end"] = df["hull_rt_begin"], df["hull_rt_end"]
     df = df.sort_values(["rt_model", "mz"]).reset_index(drop=True)
-    if exp is None:
-        exp = load_ms1(mzml_path)
-    ms1 = _ms1_arrays(exp)
-    del exp
+    if ms1 is None:
+        ms1 = _ms1_arrays(load_ms1(mzml_path))
     df = _reextract(df, ms1, xic_ppm=xic_ppm, area_isotopes=area_isotopes, area_scale=area_scale,
                     apex_from=apex_from, boundary=boundary, boundary_isotopes=boundary_isotopes,
                     boundary_frac=boundary_frac, boundary_gap=boundary_gap,

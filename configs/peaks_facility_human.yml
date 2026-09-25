@@ -13,7 +13,7 @@ variable_modifications:
   - {name: Deamidation, residues: NQ}
   - {name: Oxidation, residues: M}
 max_variable_ptm_per_peptide: 3
-database: /drive_a/drew/openms-data/260921-DrewR_Adam_91526/fasta/human_sp.fasta
+database: /drive_a/drew/peaks-parity-work/fasta/human_sp_peaks_merged.fasta  # local SwissProt human with PEAKS-exported entries swapped in (see docs/PROTEIN_INFERENCE.md)
 deep_learning_boost: true
 fdr_estimation: true
 confident_amino_acid_threshold_pct: 2.0
