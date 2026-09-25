@@ -17,7 +17,11 @@ def cmd_search(a):
     cfg = SearchConfig.from_yaml(a.config)
     if a.threads:
         cfg.threads = a.threads
-    print(run_sage(cfg, a.mzml, a.out, chimera=a.chimera, report_psms=a.report_psms))
+    if a.chunks > 1:
+        from .sage_search import run_sage_chunked
+        print(run_sage_chunked(cfg, a.mzml, a.out, n_chunks=a.chunks, chimera=a.chimera, report_psms=a.report_psms))
+    else:
+        print(run_sage(cfg, a.mzml, a.out, chimera=a.chimera, report_psms=a.report_psms))
 
 
 def cmd_concordance(a):
@@ -29,7 +33,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="peaksparity")
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert", help="Thermo raw -> mzML"); c.add_argument("raw", nargs="+"); c.add_argument("--out", required=True); c.set_defaults(fn=cmd_convert)
-    s = sub.add_parser("search", help="Sage search from a PEAKS-style config"); s.add_argument("mzml", nargs="+"); s.add_argument("--config", required=True); s.add_argument("--out", required=True); s.add_argument("--threads", type=int); s.add_argument("--chimera", action="store_true"); s.add_argument("--report-psms", type=int, default=1); s.set_defaults(fn=cmd_search)
+    s = sub.add_parser("search", help="Sage search from a PEAKS-style config"); s.add_argument("mzml", nargs="+"); s.add_argument("--config", required=True); s.add_argument("--out", required=True); s.add_argument("--threads", type=int); s.add_argument("--chimera", action="store_true"); s.add_argument("--report-psms", type=int, default=1); s.add_argument("--chunks", type=int, default=1, help="split the FASTA into N chunks to bound memory"); s.set_defaults(fn=cmd_search)
     k = sub.add_parser("concordance", help="compare an export dir to a PEAKS reference"); k.add_argument("--ref", required=True); k.add_argument("--test", required=True); k.add_argument("--out", required=True); k.set_defaults(fn=cmd_concordance)
     a = p.parse_args(argv)
     a.fn(a)

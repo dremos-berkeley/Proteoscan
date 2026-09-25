@@ -120,3 +120,65 @@ def read_sage(tsv: str | Path, decoy_tag: str = "rev_") -> pd.DataFrame:
     df = df.rename(columns={"peptide": "peptide_sage", "expmass": "exp_mass", "calcmass": "calc_mass"})
     df["exp_mz"] = (df["exp_mass"] + df["charge"] * 1.007276466) / df["charge"]
     return df
+
+
+# ----------------------------------------------------------------------------------------------
+# Memory-bounded chunked search.
+#
+# Sage keeps the whole fragment index in RAM. A semi-tryptic human search with 3 variable mods
+# needs several hundred GB, far beyond a laptop. We split the FASTA round-robin into chunks,
+# search each chunk with report_psms candidates per spectrum, and merge candidates by hyperscore.
+# Hyperscore does not depend on the database, so merging is exact for the candidate list; the
+# rank-dependent columns (delta_next, delta_best, rank) and Sage's own discriminant/q-values are
+# recomputed or dropped here and replaced by our rescoring stage.
+# ----------------------------------------------------------------------------------------------
+import dataclasses as _dc
+
+from .decoys import split_fasta
+
+SAGE_RANK_COLS = ["sage_discriminant_score", "posterior_error", "spectrum_q", "peptide_q", "protein_q"]
+
+
+def run_sage_chunked(cfg: SearchConfig, mzmls: list[str | Path], out_dir: str | Path,
+                     n_chunks: int = 16, report_psms: int = 5, **kw) -> Path:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    chunks = split_fasta(cfg.database, out_dir / "fasta_chunks", n_chunks)
+    merged_parts = []
+    for i, chunk in enumerate(chunks):
+        cdir = out_dir / f"chunk_{i:03d}"
+        tsv = cdir / "results.sage.tsv"
+        if not tsv.exists():
+            ccfg = _dc.replace(cfg, database=str(chunk))
+            run_sage(ccfg, mzmls, cdir, report_psms=report_psms, **kw)
+        part = pd.read_csv(tsv, sep="\t")
+        part["chunk"] = i
+        merged_parts.append(part)
+    merged = pd.concat(merged_parts, ignore_index=True)
+    merged = merge_candidates(merged, report_psms)
+    out = out_dir / "results.sage.tsv"
+    merged.to_csv(out, sep="\t", index=False)
+    return out
+
+
+def merge_candidates(df: pd.DataFrame, keep: int) -> pd.DataFrame:
+    """Keep the top `keep` candidates per (filename, scannr) by hyperscore and recompute
+    rank/delta columns. Identical peptides found in two chunks (cannot happen with a round-robin
+    split of distinct proteins, but shared sequences across proteins can) are collapsed, merging
+    their protein lists."""
+    df = df.copy()
+    key = ["filename", "scannr", "peptide", "charge"]
+    agg = {c: "first" for c in df.columns if c not in key}
+    agg["proteins"] = lambda s: ";".join(sorted(set(";".join(s).split(";"))))
+    agg["num_proteins"] = "sum"
+    df = df.groupby(key, as_index=False, sort=False).agg(agg)
+    df["label"] = df["proteins"].map(lambda p: -1 if all(x.startswith("rev_") or x.startswith("#DECOY#") for x in p.split(";")) else 1)
+    df = df.sort_values(["filename", "scannr", "hyperscore"], ascending=[True, True, False])
+    df["rank"] = df.groupby(["filename", "scannr"]).cumcount() + 1
+    df = df[df["rank"] <= keep].copy()
+    best = df.groupby(["filename", "scannr"])["hyperscore"].transform("max")
+    nxt = df.groupby(["filename", "scannr"])["hyperscore"].shift(-1)
+    df["delta_best"] = best - df["hyperscore"]
+    df["delta_next"] = (df["hyperscore"] - nxt).fillna(df["hyperscore"])
+    df = df.drop(columns=[c for c in SAGE_RANK_COLS if c in df.columns])
+    return df.reset_index(drop=True)
