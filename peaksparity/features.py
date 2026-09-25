@@ -283,8 +283,12 @@ def _featuremap_records(fm) -> list[dict[str, Any]]:
 def _run_centroided(mzml_path, openms, threads, slabs, slab_overlap):
     """FFC in parallel over ``slabs`` overlapping m/z ranges (features kept by mono m/z)."""
     exp = load_ms1(mzml_path)
-    lo = max(0.0, exp.getMinMZ() - 1)
-    hi = exp.getMaxMZ() + 1
+    lo, hi = np.inf, -np.inf
+    for s in exp:
+        if s.size():
+            mz, _ = s.get_peaks()
+            lo, hi = min(lo, float(mz.min())), max(hi, float(mz.max()))
+    lo, hi = max(0.0, lo - 0.01), hi + 0.01
     del exp
     edges = np.linspace(lo, hi, slabs + 1)
     jobs = []
@@ -379,65 +383,125 @@ def _lookup(ms1, scan_idx, target_mz, ppm):
     return best_int, best_mz
 
 
-def _reextract(df: pd.DataFrame, ms1, ppm: float, max_iso: int, area_scale: float,
-               apex_from: str, boundary_frac: float) -> pd.DataFrame:
-    """Re-extract isotope XICs inside each feature's RT range; area, apex, scan count."""
+def _walk_bounds_py(x, offs, apex_idx, frac, max_gap, valley):
+    n_f = len(offs) - 1
+    lo = np.empty(n_f, np.int64)
+    hi = np.empty(n_f, np.int64)
+    for f in range(n_f):
+        a, b = offs[f], offs[f + 1]
+        ap = apex_idx[f]
+        top = x[ap]
+        thr = frac * top
+        for direction in (-1, 1):
+            last = ap
+            gap = 0
+            run_min = top
+            i = ap
+            while True:
+                i += direction
+                if i < a or i >= b:
+                    break
+                v = x[i]
+                if v >= thr and v > 0:
+                    # valley split: signal rises again after dropping below valley*top
+                    if valley > 0 and run_min < valley * top and v > 2.0 * run_min and v > thr * 2:
+                        break
+                    last = i
+                    gap = 0
+                    if v < run_min:
+                        run_min = v
+                else:
+                    gap += 1
+                    if v < run_min:
+                        run_min = v
+                    if gap > max_gap:
+                        break
+            if direction < 0:
+                lo[f] = last
+            else:
+                hi[f] = last
+    return lo, hi
+
+
+try:  # numba is optional; the pure-python walk is ~50x slower
+    from numba import njit as _njit
+
+    _walk_bounds = _njit(cache=True)(_walk_bounds_py)
+except Exception:  # pragma: no cover
+    _walk_bounds = _walk_bounds_py
+
+
+def _reextract(df: pd.DataFrame, ms1, xic_ppm: float = 5.0, area_isotopes: int = 2,
+               area_scale: float = 1.0, apex_from: str = "xic", boundary: str = "walk",
+               boundary_isotopes: int = 2, boundary_frac: float = 0.1, boundary_gap: int = 1,
+               boundary_window: float = 1.0, boundary_valley: float = 0.0) -> pd.DataFrame:
+    """Re-extract isotope XICs around each feature and re-derive RT range, apex and area.
+
+    x(t) = summed XIC of the first ``boundary_isotopes`` isotope peaks (``xic_ppm``).
+    The apex is the max of x inside the algorithm's RT range.  With boundary="walk",
+    rt_begin/rt_end are found by walking outward from the apex while x >= boundary_frac *
+    apex, tolerating up to ``boundary_gap`` consecutive scans below it, never beyond
+    ``boundary_window`` minutes outside the algorithm's range (and optionally splitting at
+    valleys deeper than ``boundary_valley`` * apex).  boundary="hull" keeps the algorithm's
+    range.  area = trapezoid (RT in minutes) of the summed XIC of the first
+    ``area_isotopes`` isotopes over [rt_begin, rt_end], times ``area_scale``.
+    """
     rt = ms1["rt"]
-    s0 = np.searchsorted(rt, df["rt_begin"].to_numpy() - 1e-9, side="left")
-    s1 = np.searchsorted(rt, df["rt_end"].to_numpy() + 1e-9, side="right") - 1
-    s1 = np.maximum(s1, s0)
-    s1 = np.minimum(s1, len(rt) - 1)
+    nsc = len(rt)
+    rb0 = df["rt_begin"].to_numpy()
+    re0 = df["rt_end"].to_numpy()
+    w = boundary_window if boundary == "walk" else 0.0
+    s0 = np.searchsorted(rt, rb0 - w - 1e-9, side="left")
+    s1 = np.searchsorted(rt, re0 + w + 1e-9, side="right") - 1
+    s1 = np.clip(s1, 0, nsc - 1)
     s0 = np.minimum(s0, s1)
     n = (s1 - s0 + 1).astype(np.int64)
+    offs = np.r_[0, np.cumsum(n)]
     fid = np.repeat(np.arange(len(df)), n)
-    start = np.repeat(np.cumsum(n) - n, n)
-    scan = np.repeat(s0, n) + (np.arange(n.sum()) - start)
+    scan = np.repeat(s0, n) + (np.arange(offs[-1]) - offs[:-1][fid])
+    t = rt[scan]
     mono = df["mz"].to_numpy()[fid]
     z = np.maximum(df["charge"].to_numpy()[fid], 1)
-    niso = np.clip(df["n_isotopes"].to_numpy(), 1, max_iso)[fid]
-    xic = np.zeros(len(fid))
-    xic0 = None
-    for k in range(max_iso):
-        inten, _ = _lookup(ms1, scan, mono + k * C13_DELTA / z, ppm)
-        inten = np.where(k < niso, inten, 0.0)
-        xic += inten
-        if k == 0:
-            xic0 = inten
-    t = rt[scan]
-    # optional boundary trimming at a fraction of the apex (per feature)
-    starts = np.cumsum(n) - n
-    apex_val = np.maximum.reduceat(xic, starts) if len(xic) else np.zeros(0)
-    keep = np.ones(len(xic), bool)
-    if boundary_frac > 0 and len(xic):
-        keep = xic >= boundary_frac * apex_val[fid]
-    # trapezoid per feature over consecutive kept scans
-    same = np.r_[fid[1:] == fid[:-1], False]
-    dt = np.r_[t[1:] - t[:-1], 0.0]
-    both = same & keep & np.r_[keep[1:], False]
-    seg = np.where(both, 0.5 * (xic + np.r_[xic[1:], 0.0]) * dt, 0.0)
-    seg0 = np.where(both, 0.5 * (xic0 + np.r_[xic0[1:], 0.0]) * dt, 0.0)
-    area = np.add.reduceat(seg, starts) * area_scale
-    area0 = np.add.reduceat(seg0, starts) * area_scale
-    ms1_scans = np.add.reduceat(((xic0 > 0) & keep).astype(int), starts)
-    # apex = scan of max summed XIC
-    order = np.lexsort((-xic, fid))
+    K = max(area_isotopes, boundary_isotopes)
+    X = np.zeros((K, len(fid)))
+    for k in range(K):
+        X[k], _ = _lookup(ms1, scan, mono + k * C13_DELTA / z, xic_ppm)
+    xb = X[:boundary_isotopes].sum(0)
+    xa = X[:area_isotopes].sum(0)
+    # apex inside the original range
+    inside = (t >= rb0[fid] - 1e-9) & (t <= re0[fid] + 1e-9)
+    score = np.where(inside, xb, -1.0)
+    order = np.lexsort((-score, fid))
     first = np.r_[True, fid[order][1:] != fid[order][:-1]]
-    apex_rt = t[order][first]
-    # kept range
-    tk = np.where(keep & (xic > 0), t, np.nan)
-    with np.errstate(all="ignore"):
-        rb = pd.Series(tk).groupby(fid).min().reindex(range(len(df))).to_numpy()
-        re_ = pd.Series(tk).groupby(fid).max().reindex(range(len(df))).to_numpy()
+    apex_idx = order[first]
+    if boundary == "walk":
+        lo, hi = _walk_bounds(xb, offs, apex_idx, float(boundary_frac), int(boundary_gap),
+                              float(boundary_valley))
+    else:
+        idx_in = np.where(inside)[0]
+        lo = np.full(len(df), -1)
+        hi = np.full(len(df), -1)
+        g = pd.Series(idx_in).groupby(fid[idx_in])
+        lo[g.min().index] = g.min().to_numpy()
+        hi[g.max().index] = g.max().to_numpy()
+        lo = np.where(lo < 0, apex_idx, lo)
+        hi = np.where(hi < 0, apex_idx, hi)
+    keep = (np.arange(len(fid)) >= lo[fid]) & (np.arange(len(fid)) <= hi[fid])
+    nxt_same = np.r_[fid[1:] == fid[:-1], False]
+    both = keep & np.r_[keep[1:], False] & nxt_same
+    dt = np.r_[t[1:] - t[:-1], 0.0]
+    seg = np.where(both, 0.5 * (xa + np.r_[xa[1:], 0.0]) * dt, 0.0)
+    seg0 = np.where(both, 0.5 * (X[0] + np.r_[X[0][1:], 0.0]) * dt, 0.0)
     out = df.copy()
-    out["area"] = area
-    out["area_mono"] = area0
-    out["apex_intensity"] = apex_val
-    out["ms1_scans"] = ms1_scans
-    out["rt_xic_apex"] = apex_rt
-    if boundary_frac > 0:
-        out["rt_begin"] = np.where(np.isnan(rb), out["rt_begin"], rb)
-        out["rt_end"] = np.where(np.isnan(re_), out["rt_end"], re_)
-    out["rt"] = out["rt_xic_apex"] if apex_from == "xic" else out["rt_model"]
+    out["area"] = np.bincount(fid, weights=seg, minlength=len(df)) * area_scale
+    out["area_mono"] = np.bincount(fid, weights=seg0, minlength=len(df)) * area_scale
+    out["apex_intensity"] = xb[apex_idx]
+    out["rt_xic_apex"] = t[apex_idx]
+    out["rt_begin"] = t[lo]
+    out["rt_end"] = t[hi]
+    out["ms1_scans"] = (hi - lo + 1).astype(int)
+    out["ms1_scans_mono"] = np.bincount(fid, weights=(keep & (X[0] > 0)), minlength=len(df)).astype(int)
+    out["rt"] = out["rt_xic_apex"] if apex_from == "xic" else out["rt_model"].clip(out["rt_begin"], out["rt_end"])
     return out
 
 
@@ -445,21 +509,32 @@ def _reextract(df: pd.DataFrame, ms1, ppm: float, max_iso: int, area_scale: floa
 # Main entry points
 # --------------------------------------------------------------------------------------
 
+_RAW_COLS = ["mz", "charge", "rt_model", "hull_rt_begin", "hull_rt_end", "mono_rt_begin",
+             "mono_rt_end", "intensity", "quality", "n_isotopes"]
+
+
 def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathLike | None = None,
                     algorithm: str = "centroided", openms: dict[str, Any] | None = None,
                     threads: int = 16, slabs: int = 16, slab_overlap: float = 6.0,
-                    rt_range: str = "hull", xic_ppm: float = 10.0, area_isotopes: int = 3,
-                    area_scale: float = 1.0, apex_from: str = "model",
-                    boundary_frac: float = 0.0, min_charge: int = 1, max_charge: int = 9,
-                    min_ms1_scans: int = 1, verbose: bool = True, **params) -> pd.DataFrame:
+                    rt_range: str = "hull", xic_ppm: float = 5.0, area_isotopes: int = 2,
+                    area_scale: float = 1.0, apex_from: str = "xic", boundary: str = "walk",
+                    boundary_isotopes: int = 2, boundary_frac: float = 0.1,
+                    boundary_gap: int = 1, boundary_window: float = 1.0,
+                    boundary_valley: float = 0.0, min_charge: int = 1, max_charge: int = 9,
+                    min_ms1_scans: int = 1, dedupe_ppm: float = 5.0,
+                    raw_cache: str | os.PathLike | None = None, verbose: bool = True,
+                    **params) -> pd.DataFrame:
     """Detect MS1 features in an mzML and return one row per feature.
 
     ``openms`` (and any extra keyword ``section__name=value``, mapped to
     ``section:name``) override :data:`DEFAULT_OPENMS` for the chosen algorithm.
-    ``rt_range`` = hull (union of isotope hulls) | mono (monoisotopic trace hull).
-    ``apex_from`` = model (the algorithm's RT) | xic (scan of max re-extracted intensity).
-    ``boundary_frac`` > 0 trims rt_begin/rt_end to scans whose summed XIC is at least this
-    fraction of the apex.  RT columns are in minutes.
+    The algorithm's features are then re-quantified on the MS1 centroids by
+    :func:`_reextract` (see there for ``xic_ppm``, ``area_*``, ``boundary*``, ``apex_from``).
+    ``rt_range`` = hull | mono: which algorithm hull seeds the apex search.
+    Features that end up with the same charge, m/z within ``dedupe_ppm`` and identical RT
+    range are merged (largest area kept).  ``raw_cache``: parquet of the algorithm's raw
+    features; read instead of re-running detection when it exists, written otherwise.
+    RT columns are in minutes.
     """
     t0 = time.time()
     algorithm = algorithm.lower()
@@ -470,27 +545,44 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     op.update({k.replace("__", ":"): v for k, v in params.items()})
     os.environ["OMP_NUM_THREADS"] = str(threads)  # effective only if pyopenms not yet loaded
 
-    fm = None
-    if algorithm == "centroided":
-        recs = _run_centroided(mzml_path, op, threads, slabs, slab_overlap)
-        exp = load_ms1(mzml_path)
+    exp = None
+    if raw_cache is not None and Path(raw_cache).exists():
+        df = pd.read_parquet(raw_cache)
     else:
-        exp = load_ms1(mzml_path)
-        fm = _run_metabo(exp, op) if algorithm == "metabo" else _run_multiplex(exp, op)
-        recs = _featuremap_records(fm)
+        if algorithm == "centroided":
+            recs = _run_centroided(mzml_path, op, threads, slabs, slab_overlap)
+        else:
+            exp = load_ms1(mzml_path)
+            fm = _run_metabo(exp, op) if algorithm == "metabo" else _run_multiplex(exp, op)
+            recs = _featuremap_records(fm)
+        df = pd.DataFrame(recs, columns=_RAW_COLS)
+        if raw_cache is not None:
+            Path(raw_cache).parent.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(raw_cache, index=False)
     t_detect = time.time() - t0
-    df = pd.DataFrame(recs, columns=["mz", "charge", "rt_model", "hull_rt_begin", "hull_rt_end",
-                                     "mono_rt_begin", "mono_rt_end", "intensity", "quality",
-                                     "n_isotopes"])
+    n_raw = len(df)
     df = df[(df["charge"] >= min_charge) & (df["charge"] <= max_charge)].copy()
     if rt_range == "mono":
         df["rt_begin"], df["rt_end"] = df["mono_rt_begin"], df["mono_rt_end"]
     else:
         df["rt_begin"], df["rt_end"] = df["hull_rt_begin"], df["hull_rt_end"]
     df = df.sort_values(["rt_model", "mz"]).reset_index(drop=True)
+    if exp is None:
+        exp = load_ms1(mzml_path)
     ms1 = _ms1_arrays(exp)
-    df = _reextract(df, ms1, xic_ppm, area_isotopes, area_scale, apex_from, boundary_frac)
-    df = df[df["ms1_scans"] >= min_ms1_scans].reset_index(drop=True)
+    del exp
+    df = _reextract(df, ms1, xic_ppm=xic_ppm, area_isotopes=area_isotopes, area_scale=area_scale,
+                    apex_from=apex_from, boundary=boundary, boundary_isotopes=boundary_isotopes,
+                    boundary_frac=boundary_frac, boundary_gap=boundary_gap,
+                    boundary_window=boundary_window, boundary_valley=boundary_valley)
+    df = df[df["ms1_scans"] >= min_ms1_scans]
+    if dedupe_ppm > 0 and len(df):
+        df = df.sort_values(["charge", "rt_begin", "rt_end", "mz"]).reset_index(drop=True)
+        same = (df["charge"].diff() == 0) & (df["rt_begin"].diff() == 0) & \
+               (df["rt_end"].diff() == 0) & (df["mz"].diff().abs() <= df["mz"] * dedupe_ppm * 1e-6)
+        grp = (~same).cumsum()
+        df = df.loc[df.groupby(grp)["area"].idxmax()]
+    df = df.sort_values(["rt", "mz"]).reset_index(drop=True)
     df.insert(0, "feature_id", np.arange(1, len(df) + 1))
     cols = ["feature_id", "mz", "charge", "rt", "rt_begin", "rt_end", "area", "quality",
             "n_isotopes", "ms1_scans"]
@@ -498,8 +590,8 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     df.attrs["runtime_s"] = time.time() - t0
     df.attrs["detect_s"] = t_detect
     if verbose:
-        print(f"[features] {algorithm}: {len(df)} features in {time.time() - t0:.0f}s "
-              f"(detection {t_detect:.0f}s)", flush=True)
+        print(f"[features] {algorithm}: {n_raw} raw -> {len(df)} features in "
+              f"{time.time() - t0:.0f}s (detection {t_detect:.0f}s)", flush=True)
     if out_featurexml is not None:
         _write_featurexml(df, out_featurexml)
     return df
@@ -522,7 +614,8 @@ def _write_featurexml(df: pd.DataFrame, path) -> None:
         h.setHullPoints(np.array([[r.rt_begin * 60.0, r.mz],
                                   [r.rt_end * 60.0, r.mz],
                                   [r.rt_end * 60.0, r.mz + (max(r.n_isotopes, 1) - 1) * C13_DELTA / r.charge],
-                                  [r.rt_begin * 60.0, r.mz + (max(r.n_isotopes, 1) - 1) * C13_DELTA / r.charge]]))
+                                  [r.rt_begin * 60.0, r.mz + (max(r.n_isotopes, 1) - 1) * C13_DELTA / r.charge]],
+                                 dtype=np.float32))
         f.setConvexHulls([h])
         f.setMetaValue("n_isotopes", int(r.n_isotopes))
         f.setMetaValue("ms1_scans", int(r.ms1_scans))

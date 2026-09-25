@@ -243,13 +243,12 @@ def mgf_compare(det, mgf, ms2, ms2meta, ppm, rt_tol) -> dict:
     """Compare against PEAKS's per-(scan, feature) MGF queries."""
     out = {}
     q = mgf.copy()
-    # entries whose RT equals the MS2 scan's own RT and m/z equals the instrument
-    # precursor are PEAKS fallbacks (no feature found)
+    # a feature apex is an MS1 scan time, so an entry whose RT equals its MS2 scan's own
+    # RT is a PEAKS fallback query (no feature; m/z may still be mono-corrected)
     if ms2meta is not None:
         mm = ms2meta.set_index("scan")
         srt = mm["rt"].reindex(q["raw_scan"]).to_numpy()
-        smz = mm["precursor_mz"].reindex(q["raw_scan"]).to_numpy()
-        q["fallback"] = (np.abs(q["rt"] - srt) < 2e-4) & (np.abs(q["mz"] - smz) < 0.01)
+        q["fallback"] = np.abs(q["rt"] - srt) < 2e-4
     else:
         q["fallback"] = False
     out["mgf_queries"] = len(q)

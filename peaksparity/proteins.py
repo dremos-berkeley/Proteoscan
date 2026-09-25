@@ -11,37 +11,45 @@ docs/PROTEIN_INFERENCE.md for the evidence.  Summary:
 
 Peptide -> protein mapping
     A peptide supports a protein when its residue sequence occurs in the protein with I and L
-    treated as identical.  PEAKS writes one peptide row per I/L variant that exists in the
-    database (e.g. AILFLPR for CCL21 and ALLFIPR for HS90B, same spectrum and score), and a
-    protein lists only the variant(s) that occur verbatim in it.  Domination and uniqueness
-    work on the I/L-collapsed sequence ("peptide family").  Start/End are the 1-based first
-    occurrence; coverage uses only that occurrence.
+    treated as identical *and* that occurrence is a valid digestion product under the search
+    settings (semi-specific trypsin, K/R not before P, <= 2 missed cleavages; a protein
+    N-terminus or position 2 after an initiator Met is an enzymatic terminus).  PEAKS writes
+    one peptide row per I/L variant that exists in the database (e.g. AILFLPR for CCL21 and
+    ALLFIPR for HS90B, same spectrum and score); a protein lists only the variant(s) that
+    occur verbatim in it.  Domination and uniqueness work on the I/L-collapsed sequence
+    ("peptide family").  Start/End are the 1-based first occurrence; coverage uses only that
+    occurrence.
 
 Protein -10lgP
     sum_k s_k / k over the protein's distinct residue sequences (not peptidoforms: all PTM
     forms and positions of one sequence count once, at their best score), s_1 >= s_2 >= ...,
-    accumulated in float32.  (This differs from the published rule,
-    which counts different PTM sets separately; the exports show all PTM forms collapse.)
+    accumulated in float32.  (The published rule counts different PTM sets separately; the
+    exports show that all PTM forms of a sequence collapse.)
 
-Grouping
-    Protein X dominates Y when every peptide family of Y with score >= T (T = 15) is also a
-    family of X.  See :func:`group_proteins` for the exact greedy procedure, the Top rule and
-    tie handling.
+Grouping and numbering
+    Proteins are processed in descending order of their number of supporting peptide rows
+    (peptidoforms).  An unassigned protein X opens group n+1; every unassigned protein Y whose
+    families with score >= T (T = 15) are a subset of X's joins it (X dominates Y).  Top =
+    same family set as X.  Group numbers are the creation order *before* the protein filter,
+    so groups whose proteins are all filtered out leave gaps.  PEAKS's order among proteins
+    with equal row counts is not reproducible (it looks hash-based); we break ties by
+    -10lgP, then accession.
 
 Unique, counts, Area, #Spec
-    A peptide family is unique when all the proteins it maps to lie in one group.
-    #Peptides / #Unique count distinct (Start, End) of the protein's supporting / unique
-    rows (so PTM forms of one sequence count once).  #Spec counts the PSMs of all supporting
-    peptidoforms.  Area is the float32 sum of the areas of the distinct MS1 features of the
-    unique supporting peptidoforms (empty when there is none).
+    A peptide family is unique when all the proteins it maps to (before filtering) lie in one
+    group.  #Peptides / #Unique count distinct (Start, End) of the protein's supporting /
+    unique rows (so PTM forms of one sequence count once).  #Spec counts the PSM rows of all
+    supporting peptidoforms.  Area is the float32 sum of the areas of the distinct MS1
+    features of the unique supporting peptidoforms (empty when there is none), printed with
+    3 significant digits rounding HALF_UP.  A feature counts for the protein tables only if
+    one of its PSMs has -10lgP >= 20.
 
 Filter
-    Proteins with -10lgP < 15 or #Unique < 1 are removed after grouping; peptides keep the
-    uniqueness computed before the filter.
+    Proteins with -10lgP < 15 or #Unique < 1 are removed after grouping.
 
 Average Mass
     Sum of average residue masses (classic table, see ``AVERAGE_RESIDUE``) plus the
-    *monoisotopic* mass of water (18.01056), cast to float32.  X = mean of the 20 residues.
+    monoisotopic mass of water (18.01056), cast to float32.  X = mean of the 20 residues.
 
 Description / Gene
     Description is the FASTA header after the first token; Gene the ``GN=`` value.
@@ -49,7 +57,6 @@ Description / Gene
 
 from __future__ import annotations
 
-import os
 import re
 from collections import defaultdict
 
@@ -86,7 +93,9 @@ AVERAGE_RESIDUE = {
     "S": 87.0782, "T": 101.1051, "W": 186.2132, "Y": 163.1760, "V": 99.1326,
 }
 AVERAGE_RESIDUE["X"] = sum(AVERAGE_RESIDUE.values()) / 20.0
-AVERAGE_RESIDUE.update({"U": 150.0388, "O": 237.3018,
+# PEAKS's database stores selenocysteine as X (SELH_HUMAN: local U44, PEAKS X44), and
+# ProteinDB converts U -> X on reading; U is mapped to the X mass for callers that do not.
+AVERAGE_RESIDUE.update({"U": AVERAGE_RESIDUE["X"], "O": 237.3018,
                         "B": (114.1038 + 115.0886) / 2, "Z": (128.1307 + 129.1155) / 2,
                         "J": 113.1594})
 WATER_MONO = 18.01056  # PEAKS uses the 5-decimal monoisotopic water here (1260/1260 exact)
@@ -109,9 +118,10 @@ def _accession(token):
 
 class ProteinDB:
     """Proteins of a FASTA file: parallel lists ``accession``, ``description``, ``gene``,
-    ``sequence`` plus ``index`` (accession -> position)."""
+    ``sequence`` plus ``index`` (accession -> position).  Selenocysteine (U) is stored as X,
+    as in PEAKS's own database."""
 
-    def __init__(self, entries):
+    def __init__(self, entries, u_to_x=True):
         self.accession, self.description, self.gene, self.sequence = [], [], [], []
         self.index = {}
         for header, seq in entries:
@@ -125,7 +135,10 @@ class ProteinDB:
             self.accession.append(acc)
             self.description.append(rest.strip())
             self.gene.append(m.group(1) if m else "")
-            self.sequence.append(seq.upper().replace("*", ""))
+            seq = seq.upper().replace("*", "")
+            if u_to_x:
+                seq = seq.replace("U", "X")
+            self.sequence.append(seq)
         self._collapsed = None
         self._automaton = None
 
