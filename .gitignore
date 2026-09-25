@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+env/create.log
+env/torch_fix.log
+runs/
+work/
+*.mzML
+*.raw
+*.parquet

@@ -1,0 +1,36 @@
+name: peaksparity
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  - lightgbm
+  - pyarrow
+  - polars
+  - numba
+  - lxml
+  - pyteomics
+  - pyopenms
+  - sage-proteomics
+  - comet-ms
+  - percolator
+  - thermorawfileparser
+  - matplotlib
+  - tqdm
+  - click
+  - pyyaml
+  - pytest
+  - pip:
+      - torch==2.6.0  # install from https://download.pytorch.org/whl/cu124 on Linux+NVIDIA (driver 555); default wheel on macOS
+      - mokapot
+      - peptdeep
+      - casanovo
+      - ms2pip
+      - deeplc
+      - psm-utils
+      - spectrum-utils
