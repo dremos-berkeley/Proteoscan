@@ -40,9 +40,14 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import multiprocessing as mp
+
 import numpy as np
 import pandas as pd
 import yaml
+
+# pyopenms uses OpenMP with all cores unless told otherwise; the server is shared.
+os.environ.setdefault("OMP_NUM_THREADS", "16")
 
 C13_DELTA = 1.0033548378
 PROTON = 1.00727646688
@@ -294,9 +299,16 @@ def _run_centroided(mzml_path, openms, threads, slabs, slab_overlap):
         for j in jobs:
             recs += _ffc_slab(j)
     else:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            for r in ex.map(_ffc_slab, jobs):
-                recs += r
+        # spawn (not fork): each worker must initialise OpenMP with its own thread count
+        old = os.environ.get("OMP_NUM_THREADS")
+        os.environ["OMP_NUM_THREADS"] = str(max(1, threads // workers))
+        try:
+            with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
+                for r in ex.map(_ffc_slab, jobs):
+                    recs += r
+        finally:
+            if old is not None:
+                os.environ["OMP_NUM_THREADS"] = old
     return recs
 
 
@@ -310,7 +322,9 @@ def _run_metabo(exp, openms):
     mtd = oms.MassTraceDetection()
     mtd.setParameters(_param(mtd.getDefaults(), groups["mtd"]))
     traces = []
+    t = time.time()
     mtd.run(exp, traces, 0)
+    print(f"[features] metabo: {len(traces)} mass traces ({time.time() - t:.0f}s)", flush=True)
     epd_on = str(groups["epd"].pop("enabled", "true")).lower() == "true"
     if epd_on:
         epd = oms.ElutionPeakDetection()
@@ -322,11 +336,13 @@ def _run_metabo(exp, openms):
             epd.filterByPeakWidth(split, filt)
             split = filt
         traces = split
+        print(f"[features] metabo: {len(traces)} elution peaks ({time.time() - t:.0f}s)", flush=True)
     ffm = oms.FeatureFindingMetabo()
     ffm.setParameters(_param(ffm.getDefaults(), groups["ffm"]))
     fm = oms.FeatureMap()
     chroms = []
     ffm.run(traces, fm, chroms)
+    print(f"[features] metabo: {fm.size()} features ({time.time() - t:.0f}s)", flush=True)
     return fm
 
 
@@ -452,7 +468,7 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     op = dict(DEFAULT_OPENMS[algorithm])
     op.update(openms or {})
     op.update({k.replace("__", ":"): v for k, v in params.items()})
-    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["OMP_NUM_THREADS"] = str(threads)  # effective only if pyopenms not yet loaded
 
     fm = None
     if algorithm == "centroided":

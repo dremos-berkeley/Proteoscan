@@ -114,6 +114,7 @@ def run_sage(cfg: SearchConfig, mzmls: list[str | Path], out_dir: str | Path, **
 def read_sage(tsv: str | Path, decoy_tag: str = "rev_") -> pd.DataFrame:
     df = pd.read_csv(tsv, sep="\t")
     df["scan"] = df["scannr"].astype(str).str.extract(SCAN_RE)[0].astype(int)
+    df["precursor_idx"] = df["scannr"].astype(str).str.extract(r"precursor=(\d+)")[0].fillna(0).astype(int)
     df["source_file"] = df["filename"].map(lambda f: Path(f).name)
     df["is_decoy"] = df["label"] == -1
     df["stripped"] = df["peptide"].str.replace(r"\[[^\]]*\]|-", "", regex=True)
@@ -167,7 +168,7 @@ def merge_candidates(df: pd.DataFrame, keep: int) -> pd.DataFrame:
     split of distinct proteins, but shared sequences across proteins can) are collapsed, merging
     their protein lists."""
     df = df.copy()
-    key = ["filename", "scannr", "peptide", "charge"]
+    key = ["filename", "scannr", "peptide", "charge"]  # scannr carries the precursor index
     agg = {c: "first" for c in df.columns if c not in key}
     agg["proteins"] = lambda s: ";".join(sorted(set(";".join(s).split(";"))))
     agg["num_proteins"] = "sum"

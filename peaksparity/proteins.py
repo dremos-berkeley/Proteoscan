@@ -89,7 +89,7 @@ AVERAGE_RESIDUE["X"] = sum(AVERAGE_RESIDUE.values()) / 20.0
 AVERAGE_RESIDUE.update({"U": 150.0388, "O": 237.3018,
                         "B": (114.1038 + 115.0886) / 2, "Z": (128.1307 + 129.1155) / 2,
                         "J": 113.1594})
-WATER_MONO = 18.010565
+WATER_MONO = 18.01056  # PEAKS uses the 5-decimal monoisotopic water here (1260/1260 exact)
 
 
 # --------------------------------------------------------------------------
@@ -501,10 +501,34 @@ def _text(v):
     return str(v)
 
 
+def _f32_sum(values):
+    """Sum in float32 (PEAKS accumulates protein areas as Java floats)."""
+    t = np.float32(0.0)
+    for v in values:
+        t = np.float32(t + np.float32(v))
+    return float(t)
+
+
+def _half_up_sci(x):
+    """PEAKS prints the protein Area with 3 significant digits rounding HALF_UP (one exact
+    tie in the references: ERF3A 1065000.0f -> "1.07E6"), whereas
+    :func:`peaksparity.peaks_export.format_value` rounds HALF_EVEN.  For an exact tie
+    return the next double up so that either formatter prints the PEAKS value."""
+    if x != x or x == 0:
+        return x
+    from decimal import Decimal
+
+    d = abs(Decimal(float(x)))
+    m = d.scaleb(-d.adjusted()) * 100  # 3 significant digits -> integer part
+    if m == m.to_integral_value() + Decimal("0.5"):
+        return float(np.nextafter(float(x), np.inf if x > 0 else -np.inf))
+    return x
+
+
 def infer_proteins(peptides_df, fasta_path, score_threshold=15.0, min_unique=1, *,
                    psms_df=None, features_df=None, sample=None, enzyme=DEFAULT_ENZYME,
                    mapping="fasta", score_col=None, domination_threshold=None,
-                   feature_min_psm_score=20.0, return_details=False):
+                   feature_min_psm_score=20.0, return_details=False, psms=None, sample_name=None):
     """PEAKS-style protein inference.
 
     Parameters
@@ -535,12 +559,17 @@ def infer_proteins(peptides_df, fasta_path, score_threshold=15.0, min_unique=1, 
         only if it carries a PSM with at least this -10lgP (PEAKS: 20, see
         docs/PROTEIN_INFERENCE.md).
     return_details : also return a dict with the unfiltered groups and per-protein data.
+    psms, sample_name : aliases of ``psms_df`` and ``sample``.
 
     Returns
     -------
     (proteins_df, protein_peptides_df) with exactly the PEAKS columns, or
     (proteins_df, protein_peptides_df, details) with ``return_details``.
     """
+    if psms_df is None:
+        psms_df = psms
+    if sample is None:
+        sample = sample_name
     db = read_protein_db(fasta_path)
     T = score_threshold if domination_threshold is None else domination_threshold
     pep = peptides_df.reset_index(drop=True)
@@ -665,7 +694,7 @@ def infer_proteins(peptides_df, fasta_path, score_threshold=15.0, min_unique=1, 
             return a, nf
         if not fs:
             return np.nan, 0
-        return float(np.float32(sum(np.float32(feat_area.get(f, 0.0)) for f in fs))), len(fs)
+        return _f32_sum(feat_area.get(f, 0.0) for f in fs), len(fs)
 
     # ---- per-protein summary -----------------------------------------------
     ptm_col = _col(pep, "PTM")
@@ -688,11 +717,12 @@ def infer_proteins(peptides_df, fasta_path, score_threshold=15.0, min_unique=1, 
         # Area: distinct features of the unique supporting peptides (float32 sum)
         if all(pep_features[r] is not None for r in uniq_rows):
             fs = sorted({f for r in uniq_rows for f in pep_features[r]})
-            area = float(np.float32(sum(np.float32(feat_area.get(f, 0.0)) for f in fs))) if fs else np.nan
+            area = _f32_sum(feat_area.get(f, 0.0) for f in fs) if fs else np.nan
         else:
             vals = [pep_area(r)[0] for r in uniq_rows]
             vals = [v for v in vals if v == v]
-            area = float(np.float32(sum(vals))) if vals else np.nan
+            area = _f32_sum(vals) if vals else np.nan
+        area = _half_up_sci(area)
         ptms = set()
         if ptm_col:
             for r in rows:

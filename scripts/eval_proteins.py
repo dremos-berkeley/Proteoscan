@@ -130,8 +130,21 @@ def order_agreement(ref, test):
     return conc / max(conc + disc, 1), len(shared)
 
 
+def numbering_key_check(ref_pr, ref_pp):
+    """PEAKS numbers groups by the number of peptide rows of the group's first protein,
+    descending.  Returns (#adjacent violations, #tied adjacent pairs) over the reference
+    Top proteins (a violation would falsify the rule; ties are unresolved)."""
+    nrows = ref_pp.groupby("Accession").size()
+    top = ref_pr[ref_pr.Top].groupby("Protein Group").Accession.first().sort_index()
+    v = nrows.reindex(top.values).to_numpy()
+    d = np.diff(v)
+    return int((d > 0).sum()), int((d == 0).sum())
+
+
 def compare(ref_pr, ref_pp, pr, pp, sample):
     res = {}
+    viol, ties = numbering_key_check(ref_pr, ref_pp)
+    res["numbering_rule"] = {"violations": viol, "adjacent_ties": ties}
     n_ref, n_test, n_same, ref_only_g, test_only_g = partition_agreement(ref_pr, pr)
     res["groups"] = {"ref": n_ref, "test": n_test, "identical_membership": n_same,
                      "rate": n_same / max(n_ref, 1), "ref_only": ref_only_g[:20],
@@ -227,7 +240,8 @@ def main(argv=None):
             g = res["groups"]
             print(f"\n== mapping={mapping} sample {k}: groups {g['identical_membership']}/{g['ref']} identical "
                   f"(test {g['test']}), proteins ref {res['proteins']['ref']} test {res['proteins']['test']}, "
-                  f"numbering pair-order {res['group_numbering_pair_order']:.4f} {res['input']}")
+                  f"numbering pair-order {res['group_numbering_pair_order']:.4f} "
+                  f"(rule violations {res['numbering_rule']['violations']}, ties {res['numbering_rule']['adjacent_ties']}) {res['input']}")
             print("   proteins: " + ", ".join(f"{n} {v:.4f}" for n, v in res["protein_fields"].items()))
             ppr = res["protein_peptides"]
             print(f"   protein-peptides rows ref {ppr['ref']} test {ppr['test']} shared {ppr['shared']}: "
