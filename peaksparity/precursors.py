@@ -150,31 +150,39 @@ def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, m
 
 
 def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: str | Path,
-                        remove_precursor_region: bool = True, region_da: float = 0.5) -> Path:
-    """Write an mzML with every MS2 repeated once per precursor entry (MS1 spectra are kept)."""
-    by_scan = {k: g.sort_values("precursor_idx") for k, g in entries.groupby("scan")}
+                        remove_precursor_region: bool = True, region_da: float = 0.5,
+                        keep_ms1: bool = False) -> pd.DataFrame:
+    """Write an mzML with every MS2 repeated once per precursor entry.
+
+    Search engines key results by scan number, so every entry gets its own query number
+    (`query_id`, 1..N in file order) which replaces the scan number in the native id. Returns
+    the entries with the `query_id` column added; keep it to map results back to
+    (scan, precursor_idx)."""
+    entries = entries.sort_values(["scan", "precursor_idx"]).reset_index(drop=True).copy()
+    entries["query_id"] = np.arange(1, len(entries) + 1)
+    by_scan = {k: g for k, g in entries.groupby("scan")}
     out = oms.MSExperiment()
     for i in range(exp.getNrSpectra()):
         s = exp[i]
         if s.getMSLevel() != 2:
-            out.addSpectrum(s)
+            if keep_ms1:
+                out.addSpectrum(s)
             continue
-        scan = _scan(s.getNativeID())
-        g = by_scan.get(scan)
+        g = by_scan.get(_scan(s.getNativeID()))
         if g is None:
             continue
+        mzs0, ints0 = s.get_peaks()
         for e in g.itertuples(index=False):
             c = oms.MSSpectrum(s)
             p = c.getPrecursors()[0]
             p.setMZ(float(e.mz))
             p.setCharge(int(e.charge))
             c.setPrecursors([p])
-            c.setNativeID(f"{s.getNativeID()} precursor={int(e.precursor_idx)}")
+            c.setNativeID(f"controllerType=0 controllerNumber=1 scan={int(e.query_id)}")
             if remove_precursor_region:
-                mzs, ints = c.get_peaks()
-                keep = np.abs(mzs - float(e.mz)) > region_da + 0.7
-                c.set_peaks((mzs[keep], ints[keep]))
+                keep = np.abs(mzs0 - float(e.mz)) > region_da + 0.7
+                c.set_peaks((mzs0[keep], ints0[keep]))
             out.addSpectrum(c)
     out.updateRanges()
     oms.MzMLFile().store(str(out_path), out)
-    return Path(out_path)
+    return entries

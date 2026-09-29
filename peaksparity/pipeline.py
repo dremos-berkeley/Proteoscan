@@ -58,31 +58,28 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
         feats.to_parquet(out / "ms1_features.parquet")
     entries = build_precursor_list(exp, feats, ms2)
     entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
+    entries = write_expanded_mzml(exp, entries, exp_mzml)
     entries.to_parquet(ent_pq)
-    write_expanded_mzml(exp, entries, exp_mzml)
     return entries, exp_mzml
 
 
 def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
-    """Comet reports only the scan number; recover which precursor entry each candidate row
-    belongs to from (scan, charge, experimental mass)."""
-    e = entries.copy()
-    e["entry_mass"] = e["mz"] * e["charge"] - e["charge"] * PROTON
-    c = cands.reset_index(drop=True).copy()
-    c["_row"] = np.arange(len(c))
-    m = c[["_row", "scan", "charge", "exp_mass"]].merge(
-        e[["scan", "charge", "precursor_idx", "entry_mass", "feature_id", "area", "rt", "rt_min", "precursor_mz", "source"]],
-        on=["scan", "charge"], how="left")
-    m["d"] = (m["exp_mass"] - m["entry_mass"]).abs()
-    m = m.sort_values(["_row", "d"]).drop_duplicates("_row").set_index("_row")
-    c["precursor_idx"] = m["precursor_idx"].reindex(c["_row"]).fillna(0).astype(int).to_numpy()
-    c["feature_id"] = m["feature_id"].reindex(c["_row"]).fillna(0).astype(int).to_numpy()
-    c["feature_area"] = m["area"].reindex(c["_row"]).to_numpy()
-    c["raw_rt"] = m["rt_min"].reindex(c["_row"]).to_numpy()
-    c["raw_mz"] = m["precursor_mz"].reindex(c["_row"]).to_numpy()
-    c["entry_rt"] = m["rt"].reindex(c["_row"]).to_numpy()
-    c["entry_source"] = m["source"].reindex(c["_row"]).to_numpy()
-    return c.drop(columns="_row")
+    """Map search results on the expanded mzML (keyed by query_id in the scan column) back to
+    the raw scan and its precursor entry."""
+    e = entries.set_index("query_id")
+    c = cands.copy()
+    q = c["scan"].to_numpy()
+    c["query_id"] = q
+    c["scan"] = e["scan"].reindex(q).to_numpy().astype(int)
+    c["precursor_idx"] = e["precursor_idx"].reindex(q).to_numpy().astype(int)
+    c["feature_id"] = e["feature_id"].reindex(q).fillna(0).to_numpy().astype(int)
+    c["feature_area"] = e["area"].reindex(q).to_numpy()
+    c["entry_rt"] = e["rt"].reindex(q).to_numpy()
+    c["entry_source"] = e["source"].reindex(q).to_numpy()
+    c["raw_rt"] = (e["rt_min"].reindex(q).to_numpy() if "rt_min" in e else c["rt"].to_numpy())
+    c["raw_mz"] = (e["precursor_mz"].reindex(q).to_numpy() if "precursor_mz" in e else np.nan)
+    # rank/delta columns are per query already; spectrum grouping must use scan + precursor_idx
+    return c
 
 
 def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
