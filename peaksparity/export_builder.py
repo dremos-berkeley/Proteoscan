@@ -140,3 +140,39 @@ def assemble_export(psms: pd.DataFrame, peptides: pd.DataFrame, proteins=None, p
     return PeaksExport(psms=psms, peptides=peptides, proteins=proteins, protein_peptides=protein_peptides,
                        features=features, denovo_only=denovo_only, ptm_profile=ptm_profile,
                        modified_peptides=modified_peptides, params=params or {}, sample_name=sample_name)
+
+
+def apply_protein_mapping(psms: pd.DataFrame, fasta, enzyme=None) -> pd.DataFrame:
+    """Re-derive the Accession column the way PEAKS does and split I/L variants into rows.
+
+    PEAKS assigns a peptide to the proteins in which it is a valid digestion product, and when
+    the database holds several I/L variants of the sequence it writes one PSM row per variant
+    (same scan and score), each listing only the proteins that carry that variant verbatim.
+    PSMs whose sequence maps to no target protein keep their original row.
+    """
+    from .proteins import DEFAULT_ENZYME, ProteinDB, map_peptides, read_protein_db
+    from .seqnorm import _render, parse
+    db = fasta if isinstance(fasta, ProteinDB) else read_protein_db(fasta)
+    enzyme = enzyme or DEFAULT_ENZYME
+    parsed = {p: parse(p) for p in psms["Peptide"].unique()}
+    mapping = map_peptides(db, sorted({v[0] for v in parsed.values()}), enzyme)
+    rows = []
+    for rec in psms.to_dict("records"):
+        stripped, mods = parsed[rec["Peptide"]]
+        hits = mapping.get(stripped, [])
+        variants: dict[str, list[str]] = {}
+        for i, start, _exact in hits:
+            var = db.sequence[i][start:start + len(stripped)]
+            variants.setdefault(var, []).append(db.accession[i])
+        if not variants:
+            rows.append(rec)
+            continue
+        for var in sorted(variants):
+            r = dict(rec)
+            r["Peptide"] = _render(var, tuple(mods))
+            r["Accession"] = ";".join(variants[var])
+            if "tag(>=0.0%)" in r and isinstance(r["tag(>=0.0%)"], str) and len(r["tag(>=0.0%)"]) == len(var):
+                r["tag(>=0.0%)"] = var
+            rows.append(r)
+    out = pd.DataFrame(rows, columns=psms.columns)
+    return out.sort_values(["Accession", "Peptide", "Scan"]).reset_index(drop=True)
