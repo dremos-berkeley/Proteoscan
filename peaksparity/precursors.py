@@ -78,27 +78,34 @@ def link_features(ms2: pd.DataFrame, features: pd.DataFrame, rt_slack: float = 0
                   require_mono_in_window: bool = True, max_isotope: int = 4) -> pd.DataFrame:
     """Return rows (scan, feature_id, mz, charge, rt, area) for every feature linked to an MS2."""
     f = features.sort_values("mz").reset_index(drop=True)
-    fmz = f["mz"].to_numpy()
-    out = []
-    for r in ms2.itertuples(index=False):
-        lo, hi = r.target_mz - r.half_width, r.target_mz + r.half_width
-        # candidate features: mono m/z in [lo - max_isotope*C13, hi]
-        i0 = np.searchsorted(fmz, lo - max_isotope * C13)
-        i1 = np.searchsorted(fmz, hi, side="right")
-        for j in range(i0, i1):
-            fr = f.iloc[j]
-            if not (fr.rt_begin - rt_slack <= r.rt_min <= fr.rt_end + rt_slack):
-                continue
-            z = int(fr.charge)
-            if require_mono_in_window:
-                ok = lo <= fr.mz <= hi
-            else:
-                ok = any(lo <= fr.mz + k * C13 / z <= hi for k in range(0, max_isotope + 1))
-            if not ok:
-                continue
-            out.append(dict(scan=int(r.scan), feature_id=int(fr.feature_id), mz=float(fr.mz), charge=z,
-                            rt=float(fr.rt), area=float(fr.area)))
-    return pd.DataFrame(out, columns=["scan", "feature_id", "mz", "charge", "rt", "area"])
+    fmz = f["mz"].to_numpy(float); fz = f["charge"].to_numpy(int)
+    fb = f["rt_begin"].to_numpy(float) - rt_slack; fe = f["rt_end"].to_numpy(float) + rt_slack
+    fid = f["feature_id"].to_numpy(); frt = f["rt"].to_numpy(float); farea = f["area"].to_numpy(float)
+    scans = ms2["scan"].to_numpy(); rts = ms2["rt_min"].to_numpy(float)
+    los = (ms2["target_mz"] - ms2["half_width"]).to_numpy(float); his = (ms2["target_mz"] + ms2["half_width"]).to_numpy(float)
+    i0s = np.searchsorted(fmz, los - (0 if require_mono_in_window else max_isotope * C13), side="left")
+    i1s = np.searchsorted(fmz, his, side="right")
+    out_scan, out_idx = [], []
+    for k in range(len(scans)):
+        i0, i1 = i0s[k], i1s[k]
+        if i1 <= i0:
+            continue
+        idx = np.arange(i0, i1)
+        ok = (fb[idx] <= rts[k]) & (rts[k] <= fe[idx])
+        if not require_mono_in_window:
+            iso_ok = np.zeros(len(idx), dtype=bool)
+            for j in range(max_isotope + 1):
+                m = fmz[idx] + j * C13 / fz[idx]
+                iso_ok |= (m >= los[k]) & (m <= his[k])
+            ok &= iso_ok
+        idx = idx[ok]
+        if len(idx):
+            out_scan.append(np.full(len(idx), scans[k])); out_idx.append(idx)
+    if not out_idx:
+        return pd.DataFrame(columns=["scan", "feature_id", "mz", "charge", "rt", "area"])
+    sc = np.concatenate(out_scan); ix = np.concatenate(out_idx)
+    return pd.DataFrame({"scan": sc.astype(int), "feature_id": fid[ix], "mz": fmz[ix], "charge": fz[ix],
+                         "rt": frt[ix], "area": farea[ix]})
 
 
 def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, ms2: pd.DataFrame | None = None,
