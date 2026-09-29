@@ -6,11 +6,10 @@ compare the written CSV text with the reference files.  See docs/PTM_TABLES.md.
 import csv
 import os
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from conftest import SAMPLES, ref_dir, require_ref
+from conftest import SAMPLES, require_ref
 from peaksparity.peaks_export import read_export, write_table
 from peaksparity.ptm_tables import (
     build_modified_peptides,

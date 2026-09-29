@@ -163,6 +163,7 @@ def use_module(path):
     import importlib.util
     spec = importlib.util.spec_from_file_location("monoiso_alt", path)
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["monoiso_alt"] = mod
     spec.loader.exec_module(mod)
     _IMPL = mod.correct_precursor
 
@@ -406,7 +407,7 @@ def cmd_eval(a):
     txt = report_tables(d, truth, truth2)
     print(txt)
     if a.save:
-        d.to_parquet(Path(a.out) / f"{a.label}_eval.parquet", index=False)
+        d.drop(columns=["Mbin"]).to_parquet(Path(a.out) / f"{a.label}_eval.parquet", index=False)
         (Path(a.out) / f"{a.label}_eval.md").write_text(txt + "\n")
 
 

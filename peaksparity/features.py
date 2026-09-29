@@ -17,6 +17,8 @@ Algorithms (``algorithm=``)
     metabo      MassTraceDetection -> ElutionPeakDetection -> FeatureFindingMetabo with
                 the "peptides" isotope model (fast, trace based).
     multiplex   FeatureFinderMultiplexAlgorithm in label-free mode.
+    traces      peaksparity.feature_traces: numba mass-trace linking, valley splitting and
+                averagine isotope grouping (no pyopenms algorithm; fast).
 
 Whatever algorithm is used, every feature is re-quantified on the raw MS1 centroids
 (``_reextract``): the isotope traces mono + k*1.003355/z (k < n_isotopes, at most
@@ -107,6 +109,7 @@ DEFAULT_OPENMS: dict[str, dict[str, Any]] = {
         "ffm:mz_scoring_by_elements": "false",
         "ffm:report_chromatograms": "false",
     },
+    "traces": {},  # see peaksparity.feature_traces.DEFAULTS
     "multiplex": {
         "algorithm:labels": "",
         "algorithm:charge": "1:6",
@@ -532,9 +535,12 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
                     boundary_isotopes: int = 2, boundary_frac: float = 0.1,
                     boundary_gap: int = 1, boundary_window: float = 1.0,
                     boundary_valley: float = 0.0, min_charge: int = 1, max_charge: int = 9,
-                    min_ms1_scans: int = 1, dedupe_ppm: float = 5.0,
+                    min_ms1_scans: int = 1, min_quality: float = 0.0,
+                    min_apex_intensity: float = 0.0, min_isotopes: int = 1,
+                    high_charge: int = 99, high_charge_min_isotopes: int = 1,
+                    dedupe_ppm: float = 5.0,
                     raw_cache: str | os.PathLike | None = None, verbose: bool = True,
-                    **params) -> pd.DataFrame:
+                    ms1_arrays: dict | None = None, **params) -> pd.DataFrame:
     """Detect MS1 features in an mzML and return one row per feature.
 
     ``openms`` (and any extra keyword ``section__name=value``, mapped to
@@ -542,6 +548,9 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     The algorithm's features are then re-quantified on the MS1 centroids by
     :func:`_reextract` (see there for ``xic_ppm``, ``area_*``, ``boundary*``, ``apex_from``).
     ``rt_range`` = hull | mono: which algorithm hull seeds the apex search.
+    Filters: ``min_ms1_scans`` (scans in the final RT range), ``min_quality`` (algorithm
+    quality; isotope-pattern fit for ``traces``), ``min_apex_intensity``, ``min_isotopes``,
+    and ``high_charge_min_isotopes`` for charges >= ``high_charge``.
     Features that end up with the same charge, m/z within ``dedupe_ppm`` and identical RT
     range are merged (largest area kept).  ``raw_cache``: parquet of the algorithm's raw
     features; read instead of re-running detection when it exists, written otherwise.
@@ -556,18 +565,26 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
     op.update({k.replace("__", ":"): v for k, v in params.items()})
     os.environ["OMP_NUM_THREADS"] = str(threads)  # effective only if pyopenms not yet loaded
 
-    ms1 = None
+    ms1 = ms1_arrays  # optional pre-loaded _ms1_arrays(load_ms1(mzml_path))
     if raw_cache is not None and Path(raw_cache).exists():
         df = pd.read_parquet(raw_cache)
+    elif algorithm == "traces":
+        from .feature_traces import run_traces
+
+        if ms1 is None:
+            ms1 = _ms1_arrays(load_ms1(mzml_path))
+        recs = run_traces(ms1, op, verbose=verbose)
     else:
         exp = load_ms1(mzml_path)
-        ms1 = _ms1_arrays(exp)  # before the run: FeatureFinderMultiplex empties the map
+        if ms1 is None:
+            ms1 = _ms1_arrays(exp)  # before the run: FeatureFinderMultiplex empties the map
         if algorithm == "centroided":
             recs = _run_centroided(exp, op, threads, slabs, slab_overlap)
         else:
             fm = _run_metabo(exp, op) if algorithm == "metabo" else _run_multiplex(exp, op)
             recs = _featuremap_records(fm)
         del exp
+    if raw_cache is None or not Path(raw_cache).exists():
         df = pd.DataFrame(recs, columns=_RAW_COLS)
         if raw_cache is not None:
             Path(raw_cache).parent.mkdir(parents=True, exist_ok=True)
@@ -586,7 +603,10 @@ def detect_features(mzml_path: str | os.PathLike, out_featurexml: str | os.PathL
                     apex_from=apex_from, boundary=boundary, boundary_isotopes=boundary_isotopes,
                     boundary_frac=boundary_frac, boundary_gap=boundary_gap,
                     boundary_window=boundary_window, boundary_valley=boundary_valley)
-    df = df[df["ms1_scans"] >= min_ms1_scans]
+    keep = (df["ms1_scans"] >= min_ms1_scans) & (df["quality"] >= min_quality) & \
+        (df["apex_intensity"] >= min_apex_intensity) & (df["n_isotopes"] >= min_isotopes) & \
+        ((df["charge"] < high_charge) | (df["n_isotopes"] >= high_charge_min_isotopes))
+    df = df[keep]
     if dedupe_ppm > 0 and len(df):
         df = df.sort_values(["charge", "rt_begin", "rt_end", "mz"]).reset_index(drop=True)
         same = (df["charge"].diff() == 0) & (df["rt_begin"].diff() == 0) & \
@@ -635,18 +655,30 @@ def _write_featurexml(df: pd.DataFrame, path) -> None:
     oms.FeatureXMLFile().store(str(path), fm)
 
 
+def _averagine_fractions(mz: np.ndarray, z: np.ndarray, kmax: int) -> np.ndarray:
+    """Poisson (averagine) relative isotope abundances, shape (n, kmax), rows sum to <= 1."""
+    lam = np.clip((mz - PROTON) * z, 0, None) * 0.000594
+    k = np.arange(kmax)
+    logp = -lam[:, None] + k[None, :] * np.log(np.maximum(lam, 1e-12))[:, None] \
+        - np.cumsum(np.r_[0.0, np.log(np.arange(1, kmax))])[None, :]
+    return np.exp(logp)
+
+
 def assign_ms2_to_features(features_df: pd.DataFrame, mzml_path: str | os.PathLike | pd.DataFrame,
                            isolation_window_da: float | None = None, n_isotopes: int = 4,
-                           rt_tolerance: float = 0.0) -> pd.DataFrame:
+                           rt_tolerance: float = 0.0, min_window_fraction: float = 0.0) -> pd.DataFrame:
     """List, for every MS2 scan, the features co-isolated with it.
 
     A feature is co-isolated when rt_begin - tol <= scan RT <= rt_end + tol and any of its
     isotope peaks mono + k*1.003355/z (k = 0..n_isotopes-1) lies inside the isolation
     window [target - w/2, target + w/2].  ``isolation_window_da`` is the full width; None
     uses the offsets written in the mzML.  ``mzml_path`` may also be a DataFrame from
-    :func:`read_ms2_metadata`.  Rows are sorted by scan, then feature area (descending);
-    ``rank`` is 1 for the most intense feature.  MS2 scans with no feature get one row
-    with feature_id = -1.
+    :func:`read_ms2_metadata`.  ``window_fraction`` is the averagine share of the
+    feature's envelope inside the window; ``min_window_fraction`` > 0 drops pairs below it
+    (PEAKS keeps almost no pair under 0.2; with ``rt_tolerance`` = 0.02 min this rule
+    reproduces ~95% of PEAKS's (scan, feature) pairs, see the features REPORT).  Rows are
+    sorted by scan, then feature area (descending); ``rank`` is 1 for the most intense
+    feature.  MS2 scans with no feature get one row with feature_id = -1.
     """
     ms2 = mzml_path if isinstance(mzml_path, pd.DataFrame) else read_ms2_metadata(mzml_path)
     if isolation_window_da is None:
@@ -660,8 +692,11 @@ def assign_ms2_to_features(features_df: pd.DataFrame, mzml_path: str | os.PathLi
 
     f = features_df.reset_index(drop=True)
     fz = f["charge"].to_numpy().clip(min=1)
+    fmz = f["mz"].to_numpy()
+    kmax = max(n_isotopes, 8)
+    frac_k = _averagine_fractions(fmz, fz, kmax)
     k = np.arange(n_isotopes)
-    peak_mz = (f["mz"].to_numpy()[:, None] + k[None, :] * C13_DELTA / fz[:, None]).ravel()
+    peak_mz = (fmz[:, None] + k[None, :] * C13_DELTA / fz[:, None]).ravel()
     peak_f = np.repeat(np.arange(len(f)), n_isotopes)
     o = np.argsort(peak_mz)
     peak_mz, peak_f = peak_mz[o], peak_f[o]
@@ -677,26 +712,37 @@ def assign_ms2_to_features(features_df: pd.DataFrame, mzml_path: str | os.PathLi
     ok = (srt[scan_i] >= rb) & (srt[scan_i] <= re_)
     pairs = pd.DataFrame({"i": scan_i[ok], "f": fi[ok]})
     pairs = pairs.groupby(["i", "f"]).size().rename("n_isotopes_in_window").reset_index()
+    # averagine share of the envelope inside the window (all kmax isotopes)
+    pi, pf = pairs["i"].to_numpy(), pairs["f"].to_numpy()
+    kk = np.arange(kmax)
+    pm = fmz[pf][:, None] + kk[None, :] * C13_DELTA / fz[pf][:, None]
+    inside = (pm >= lo[pi][:, None]) & (pm <= hi[pi][:, None])
+    wfrac = (frac_k[pf] * inside).sum(1)
+    keep = wfrac >= min_window_fraction
+    pairs = pairs[keep]
+    pi, pf, wfrac = pi[keep], pf[keep], wfrac[keep]
     out = pd.DataFrame({
-        "scan": ms2["scan"].to_numpy()[pairs["i"]],
-        "ms2_rt": srt[pairs["i"]],
-        "isolation_target": target[pairs["i"]],
-        "precursor_charge": ms2["precursor_charge"].to_numpy()[pairs["i"]],
-        "feature_id": f["feature_id"].to_numpy()[pairs["f"]],
-        "feature_mz": f["mz"].to_numpy()[pairs["f"]],
-        "feature_charge": f["charge"].to_numpy()[pairs["f"]],
-        "feature_rt": f["rt"].to_numpy()[pairs["f"]],
-        "feature_area": f["area"].to_numpy()[pairs["f"]],
+        "scan": ms2["scan"].to_numpy()[pi],
+        "ms2_rt": srt[pi],
+        "isolation_target": target[pi],
+        "precursor_charge": ms2["precursor_charge"].to_numpy()[pi],
+        "feature_id": f["feature_id"].to_numpy()[pf],
+        "feature_mz": fmz[pf],
+        "feature_charge": f["charge"].to_numpy()[pf],
+        "feature_rt": f["rt"].to_numpy()[pf],
+        "feature_area": f["area"].to_numpy()[pf],
         "n_isotopes_in_window": pairs["n_isotopes_in_window"].to_numpy(),
+        "window_fraction": wfrac,
     })
-    missing = np.setdiff1d(np.arange(len(ms2)), pairs["i"].unique())
+    missing = np.setdiff1d(np.arange(len(ms2)), np.unique(pi))
     if len(missing):
         empty = pd.DataFrame({
             "scan": ms2["scan"].to_numpy()[missing], "ms2_rt": srt[missing],
             "isolation_target": target[missing],
             "precursor_charge": ms2["precursor_charge"].to_numpy()[missing],
             "feature_id": -1, "feature_mz": np.nan, "feature_charge": 0,
-            "feature_rt": np.nan, "feature_area": np.nan, "n_isotopes_in_window": 0})
+            "feature_rt": np.nan, "feature_area": np.nan, "n_isotopes_in_window": 0,
+            "window_fraction": 0.0})
         out = pd.concat([out, empty], ignore_index=True)
     out = out.sort_values(["scan", "feature_area"], ascending=[True, False],
                           na_position="last").reset_index(drop=True)
@@ -719,6 +765,7 @@ def main(argv=None) -> None:
         kw["threads"] = a.threads
     iso = kw.pop("isolation_window_da", None) if a.isolation_window is None else a.isolation_window
     kw.pop("isolation_window_da", None)
+    ms2_kw = {k[4:]: kw.pop(k) for k in list(kw) if k.startswith("ms2_")}
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     stem = Path(a.mzml).name
@@ -726,7 +773,7 @@ def main(argv=None) -> None:
         stem = stem[: -len(ext)] if stem.endswith(ext) else stem
     df = detect_features(a.mzml, out / f"{stem}.featureXML", **kw)
     df.to_parquet(out / f"{stem}.features.parquet", index=False)
-    ms2 = assign_ms2_to_features(df, a.mzml, iso)
+    ms2 = assign_ms2_to_features(df, a.mzml, iso, **ms2_kw)
     ms2.to_parquet(out / f"{stem}.ms2_features.parquet", index=False)
     print(f"[features] wrote {out}/{stem}.features.parquet ({len(df)}) and "
           f".ms2_features.parquet ({len(ms2)} rows, "

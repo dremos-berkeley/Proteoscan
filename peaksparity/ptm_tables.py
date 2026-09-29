@@ -93,10 +93,6 @@ def _sites(peptide, ptm):
     return [(p, aa, d, n) for (p, aa, d), n in zip(ms, names)]
 
 
-def _residue_label(pos, aa):
-    return f"{aa}{pos}" if len(aa) == 1 else f"{aa}{pos}"
-
-
 def _variable_names(*tables):
     """PTM names that ever carry an AScore (fixed modifications never do)."""
     names = set()
@@ -303,10 +299,11 @@ def build_modified_peptides(psms, peptides, proteins=None, protein_peptides=None
         for pos, aa, delta, name in sites:
             fixed = name not in variable
             ok = _site_confidence(pc, asc, pos, fixed)
-            flags.append(f"{_residue_label(pos, aa)}:{name}:{'true' if ok else 'false'}")
+            flags.append(f"{aa}{pos}:{name}:{'true' if ok else 'false'}")
+        stripped = strip_mods(pepstr)
         for pos in sorted(asc):
             name, s = asc[pos]
-            aa = strip_mods(pepstr)[pos - 1] if 0 < pos <= len(strip_mods(pepstr)) else ""
+            aa = stripped[pos - 1] if 0 < pos <= len(stripped) else ""
             ascores.append(f"{aa}{pos}:{name}:{min(s, ASCORE_CAP):.2f}")
         rec = {
             "Peptide Mod": pepstr,
@@ -326,7 +323,7 @@ def build_modified_peptides(psms, peptides, proteins=None, protein_peptides=None
             "AScore": ";".join(ascores),
             "Accession": prow["Accession"],
             "_score": best if best is not None else prow["-10LgP"],
-            "_stripped": strip_mods(pepstr),
+            "_stripped": stripped,
             "_rank": _mod_rank(pepstr, variable),
         }
         # unmodified counterpart: same residues, variable modifications removed, fixed kept

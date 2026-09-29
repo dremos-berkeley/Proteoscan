@@ -9,17 +9,19 @@ Usage::
         [--out <dir>] [--label NAME] [--ppm 10] [--rt 0.3]
 
 Matching: same charge, monoisotopic m/z within --ppm, and RT ranges overlap or apexes
-within --rt minutes.  Each PEAKS feature takes its best candidate (smallest
+within --rt minutes ("recall_strict": overlap AND apexes within --rt).  Each PEAKS feature takes its best candidate (smallest
 |ppm|/ppm_tol + |dRT|/rt_tol); several PEAKS features may share one detected feature.
 
 Reported
   recall                PEAKS features with a match / all PEAKS features
   agreement             Spearman of log area, median signed/abs ppm, median apex dRT,
                         median log10 area ratio (scale), begin/end differences
-  miss reasons          first applicable of: charge_differs, isotope_off (mono off by
-                        +-1/2 isotopes), in_envelope (PEAKS m/z is a non-mono peak of a
-                        detected feature of any charge), rt_mismatch, mz_10_25ppm,
-                        no_feature_signal (MS1 signal present, >=3 scans), no_signal
+  miss reasons          first applicable of: charge_differs, isotope_off_ours_lower /
+                        isotope_off_ours_higher (same z, our mono 1-2 isotopes below/above), in_envelope (PEAKS m/z is a non-mono peak of a
+                        detected feature of any charge), rt_mismatch (same z and m/z,
+                        apex within 2 min), mz_10_25ppm, no_feature_signal (no feature,
+                        but mono in >=3 and M+1 in >=2 MS1 scans of the PEAKS range),
+                        no_signal (no feature and hardly any MS1 centroids there)
   precision proxy       detected features that were fragmented (>=1 MS2 scan whose
                         isolation window holds an isotope of the feature while it elutes),
                         and how many of them are not in features.csv / not in the PEAKS
@@ -106,9 +108,15 @@ def rt_ok(ref, det, i, j, rt_tol):
     return overlap | (d <= rt_tol), d
 
 
-def match(ref: pd.DataFrame, det: pd.DataFrame, ppm: float, rt_tol: float) -> pd.DataFrame:
+def match(ref: pd.DataFrame, det: pd.DataFrame, ppm: float, rt_tol: float,
+          strict: bool = False) -> pd.DataFrame:
+    """Best detected feature per reference feature.  strict: apex within rt_tol AND overlap."""
     i, j, dppm = pairs_within(ref["mz"].to_numpy(), det["mz"].to_numpy(), ppm)
     ok, drt = rt_ok(ref, det, i, j, rt_tol)
+    if strict:
+        overlap = (det["rt_begin"].to_numpy()[j] <= ref["rt_end"].to_numpy()[i]) & \
+                  (det["rt_end"].to_numpy()[j] >= ref["rt_begin"].to_numpy()[i])
+        ok = overlap & (drt <= rt_tol)
     ok &= ref["charge"].to_numpy()[i] == det["charge"].to_numpy()[j]
     m = pd.DataFrame({"i": i[ok], "j": j[ok], "ppm": dppm[ok], "drt": drt[ok]})
     m["score"] = m["ppm"].abs() / ppm + m["drt"] / rt_tol
@@ -134,19 +142,22 @@ def miss_reasons(ref, det, missed_idx, ppm, rt_tol, ms1) -> pd.Series:
     cd[i[dz[j] != rz[i]]] = True
     # isotope off: same charge, mono shifted by +-1, +-2 isotopes
     iso = np.zeros(len(r), bool)
+    iso_k = np.zeros(len(r), int)
     for k in (-2, -1, 1, 2):
         i, j, _ = pairs_within(r["mz"].to_numpy() + k * C13_DELTA / rz, det["mz"].to_numpy(), ppm)
         i, j = with_rt(i, j)
-        iso[i[dz[j] == rz[i]]] = True
+        sel = i[dz[j] == rz[i]]
+        iso_k[sel[~iso[sel]]] = k
+        iso[sel] = True
     # in envelope: PEAKS m/z equals a non-mono isotope peak of a detected feature (any z)
     env = np.zeros(len(r), bool)
     for k in (1, 2, 3):
         i, j, _ = pairs_within(r["mz"].to_numpy(), det["mz"].to_numpy() + k * C13_DELTA / dz, ppm)
         i, j = with_rt(i, j)
         env[i] = True
-    # RT mismatch: same z, m/z ok, RT not
+    # RT mismatch: same z, m/z ok, apex within 2 min but no overlap / apex > rt_tol
     i, j, _ = pairs_within(r["mz"].to_numpy(), det["mz"].to_numpy(), ppm)
-    same = dz[j] == rz[i]
+    same = (dz[j] == rz[i]) & (np.abs(det["rt"].to_numpy()[j] - r["rt"].to_numpy()[i]) <= 2.0)
     rtm = np.zeros(len(r), bool)
     rtm[i[same]] = True
     # m/z 10-25 ppm
@@ -167,7 +178,8 @@ def miss_reasons(ref, det, missed_idx, ppm, rt_tol, ms1) -> pd.Series:
     nsc = np.bincount(fid, weights=(inten > 0), minlength=len(r))
     nsc1 = np.bincount(fid, weights=(inten1 > 0), minlength=len(r))
     sig = (nsc >= 3) & (nsc1 >= 2)
-    for name, mask in [("charge_differs", cd), ("isotope_off", iso), ("in_envelope", env),
+    for name, mask in [("charge_differs", cd), ("isotope_off_ours_lower", iso & (iso_k < 0)),
+                       ("isotope_off_ours_higher", iso & (iso_k > 0)), ("in_envelope", env),
                        ("rt_mismatch", rtm), ("mz_10_25ppm", mzo),
                        ("no_feature_signal", sig), ("no_signal", np.ones(len(r), bool))]:
         reason = np.where((reason == "") & mask, name, reason)
@@ -179,6 +191,8 @@ def evaluate(det: pd.DataFrame, ref: pd.DataFrame, ms1, ms2=None, mgf=None, ms2m
     res: dict = {"n_detected": len(det), "n_ref": len(ref)}
     m = match(ref, det, ppm, rt_tol)
     res["recall"] = len(m) / len(ref)
+    ms = match(ref, det, ppm, rt_tol, strict=True)
+    res["recall_strict"] = len(ms) / len(ref)
     res["n_matched_ref"] = len(m)
     res["n_matched_det"] = int(m["j"].nunique())
     ident = ref["identified"].to_numpy()
@@ -318,7 +332,8 @@ def main(argv=None) -> None:
         ms2meta = read_ms2_metadata(a.mzml)
         ms2meta.to_parquet(meta_p, index=False)
     ms2_path = a.ms2 or str(a.features).replace(".features.parquet", ".ms2_features.parquet")
-    ms2 = pd.read_parquet(ms2_path) if Path(ms2_path).exists() else assign_ms2_to_features(det, ms2meta)
+    ms2 = pd.read_parquet(ms2_path) if Path(ms2_path).exists() else \
+        assign_ms2_to_features(det, ms2meta, rt_tolerance=0.02, min_window_fraction=0.2)
     mgf = read_mgf_headers(a.mgf, cache / f"{stem}.mgf_headers.parquet") if a.mgf else None
     res, tab = evaluate(det, ref, ms1, ms2, mgf, ms2meta, a.ppm, a.rt)
     res = {"label": a.label, "features": str(a.features), **res}
