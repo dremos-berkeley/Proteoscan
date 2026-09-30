@@ -10,3 +10,4 @@ work/
 *.parquet
 *.egg-info/
 build/
+models/*.ckpt

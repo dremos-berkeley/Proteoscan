@@ -64,3 +64,10 @@ because the extra PSMs are wrong. Two-pass entrapment validation: pending.
 | 03_03 1 ug | Orbitrap 0.02 Da | 32,145 | 28,633 | 4,024 | 38 |
 Exports under /drive_a/drew/peaks-parity-work/hela/<run>/export. PEAKS results for these runs are
 pending on the Windows machine; they will be the training set for the score-imitation model.
+
+## De novo (2026-09-30)
+Casanovo fine-tuned on the HeLa ion-trap PSMs (docs/DENOVO.md): held-out HeLa accuracy 42%
+(released model 17%); Jurkat 20% vs 18% (different scan mode: turbo vs rapid). PEAKS's own de novo
+agrees with database identifications on only 4% of its de novo-only spectra on this data, so
+sequence-level concordance of the denovoOnly export is not a meaningful target on ion-trap data;
+the export is produced in the PEAKS layout with our model's calls and confidences.

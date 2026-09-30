@@ -43,7 +43,7 @@ def _summ(res):
 
 def _run(mgf_or_mzml, ckpt, mztab, a, **kw):
     return denovo.sequence_mzml(mgf_or_mzml, ckpt, mztab, n_beams=a.n_beams, top_match=a.top_match,
-                                gpu=a.gpu, batch_size=a.batch_size, reuse=not a.rerun, **kw)
+                                gpu=a.gpu, batch_size=a.batch_size, reuse=not a.rerun, config=a.config, **kw)
 
 
 def main():
@@ -63,11 +63,14 @@ def main():
     ap.add_argument("--batch-size", type=int, default=1024)
     ap.add_argument("--gpu", default=None)
     ap.add_argument("--rerun", action="store_true")
+    ap.add_argument("--config", help="Casanovo YAML (e.g. preprocessing overrides such as min_mz)")
+    ap.add_argument("--tag", default="", help="suffix for output names")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     tag = "" if (a.n_beams == 1 and a.top_match == 1) else f".b{a.n_beams}t{a.top_match}"
+    tag += a.tag
     existing = dict(x.split("=", 1) for x in a.mzml_mztab)
     for spec in a.model:
         name, ckpt = spec.split("=", 1)

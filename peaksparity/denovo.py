@@ -24,14 +24,13 @@ import logging
 import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
 
-from .seqnorm import canonical, format_delta, mods_of, parse, strip_mods
+from .seqnorm import canonical, format_delta, parse, strip_mods
 
 log = logging.getLogger(__name__)
 
@@ -187,19 +186,21 @@ def mzml_precursors(mzml: str | Path) -> pd.DataFrame:
 
 
 def write_annotated_mgf(entries: pd.DataFrame, mzml: str | Path, out_mgf: str | Path,
-                        title_prefix: str | None = None) -> int:
+                        title_prefix: str | None = None, return_rows: bool = False):
     """Write an MGF (optionally annotated) of the scans in ``entries``.
 
     ``entries`` columns: scan, and optionally charge, mz, rt, seq. Missing precursor values are
     taken from the mzML. A ``seq`` column produces ``SEQ=`` lines (Casanovo training format).
     Entries sharing a scan (chimeric precursors) are written as separate spectra.
-    Returns the number of spectra written.
+    Returns the number of spectra written, or with ``return_rows`` the positions (0-based,
+    in ``entries``) of the written rows, in MGF order (MGF ``index=k`` <-> ``rows[k]``).
     """
     od, meta, index = _ms2_index(mzml)
     prefix = title_prefix or Path(mzml).stem
     n = 0
+    written = []
     with open(out_mgf, "w") as fh:
-        for row in entries.itertuples(index=False):
+        for pos, row in enumerate(entries.itertuples(index=False)):
             i = index.get(int(row.scan))
             if i is None:
                 continue
@@ -232,7 +233,8 @@ def write_annotated_mgf(entries: pd.DataFrame, mzml: str | Path, out_mgf: str | 
             lines.append("END IONS")
             fh.write("\n".join(lines) + "\n")
             n += 1
-    return n
+            written.append(pos)
+    return written if return_rows else n
 
 
 # --------------------------------------------------------------------------- inference
@@ -332,9 +334,10 @@ def sequence_mzml(mzml: str | Path, model_ckpt: str | Path, out_mztab: str | Pat
     model_ckpt : Casanovo checkpoint (e.g. the fine-tuned ion-trap model).
     out_mztab : output mzTab path (Casanovo writes ``<stem>.mztab`` next to it).
     scans : optional subset of raw scan numbers; a temporary MGF with those scans is written.
-    precursors : optional DataFrame(scan, charge, mz[, rt]) overriding the mzML precursor
-        (e.g. corrected monoisotopic m/z from feature detection; one spectrum per row, so a
-        chimeric scan can be sequenced once per precursor). Implies an MGF.
+    precursors : optional DataFrame(scan, charge, mz[, rt (s)], ...) overriding the mzML
+        precursor (e.g. corrected monoisotopic m/z from feature detection; one spectrum per row,
+        so a chimeric scan can be sequenced once per precursor). Implies an MGF. Its other
+        columns (e.g. feature_id, area, feature_rt) are carried over to the returned rows.
     n_beams, top_match : beam search width and candidates returned per spectrum. With
         top_match > 1 the highest-scoring candidate within ``precursor_tol_ppm`` of the precursor
         is chosen (:func:`pick_precursor_consistent`). Casanovo 5.2 itself applies no
@@ -357,9 +360,14 @@ def sequence_mzml(mzml: str | Path, model_ckpt: str | Path, out_mztab: str | Pat
                 ent = ent[ent["scan"].isin(set(int(s) for s in scans))]
         else:
             ent = pd.DataFrame({"scan": sorted(set(int(s) for s in scans))})
+        ent = ent.reset_index(drop=True)
         mgf = out_mztab.parent / f"{stem}.input.mgf"
-        if not (reuse and mgf.exists()):
-            write_annotated_mgf(ent.drop(columns=["seq"], errors="ignore"), mzml, mgf)
+        rows_tsv = out_mztab.parent / f"{stem}.input.rows.tsv"
+        if not (reuse and mgf.exists() and rows_tsv.exists()):
+            written = write_annotated_mgf(ent.drop(columns=["seq"], errors="ignore"), mzml, mgf,
+                                          return_rows=True)
+            ent.iloc[written].assign(spectra_ref=[f"index={k}" for k in range(len(written))]).to_csv(
+                rows_tsv, sep="\t", index=False)
         peak_path = mgf
     if not (reuse and result.exists()):
         cfg_path = out_mztab.parent / f"{stem}.config.yaml"
@@ -379,6 +387,12 @@ def sequence_mzml(mzml: str | Path, model_ckpt: str | Path, out_mztab: str | Pat
         log.info("running %s", " ".join(cmd))
         subprocess.run(cmd, check=True, env=env)
     df = read_mztab(result, mgf=mgf)
+    extra = []
+    if mgf is not None and precursors is not None:
+        # carry the precursor table's own columns (feature_id, rt, area, ...) to each prediction
+        rows = pd.read_csv(out_mztab.parent / f"{stem}.input.rows.tsv", sep="\t")
+        extra = [c for c in rows.columns if c not in ("scan", "charge", "mz", "seq", "spectra_ref")]
+        df = df.merge(rows[["spectra_ref"] + extra], on="spectra_ref", how="left")
     if top_match > 1:
         df = pick_precursor_consistent(df, precursor_tol_ppm, isotopes)
     else:
@@ -387,7 +401,7 @@ def sequence_mzml(mzml: str | Path, model_ckpt: str | Path, out_mztab: str | Pat
                      zip(df["sequence"], df["exp_mz"], df["charge"])]
         df["precursor_ok"] = df["ppm"] <= precursor_tol_ppm
     cols = ["scan", "sequence", "score", "per_residue_scores", "peptide", "charge", "exp_mz",
-            "calc_mz", "precursor_ok", "ppm", "spectra_ref"]
+            "calc_mz", "precursor_ok", "ppm", "spectra_ref"] + extra
     return df[cols].reset_index(drop=True)
 
 
@@ -507,12 +521,13 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
     """Rows in the PEAKS ``<Sample>.db.denovoOnly.csv`` layout.
 
     ``denovo_df``: output of :func:`sequence_mzml` (scan, sequence, per_residue_scores, charge,
-    exp_mz; optional feature_id, rt, area, mz columns are used when present).
+    exp_mz; optional feature_id, rt_min / rt (s), area, mz columns are used when present).
     ``accepted_psm_scans``: scans (ints) or (scan, feature_id) pairs that have an accepted DB
     PSM; those spectra are excluded (PEAKS: "de novo only" = no DB hit).
-    ``precursors``: optional DataFrame(scan[, feature_id], mz, z/charge, rt (min), area,
-    feature_id) with the precursor/feature attributes to report; otherwise the de novo input
-    precursor is used and Area empty / Feature Id 0.
+    ``precursors``: optional DataFrame(scan[, feature_id], mz, rt_min (PEAKS RT, minutes) or
+    rt (seconds), area) with the precursor/feature attributes to report, joined on
+    (scan, feature_id) when both sides have feature_id, else on scan; otherwise the values
+    carried by ``denovo_df`` are used (Area empty, Feature Id 0 when absent).
     ALC = mean(per-residue score) * 100; local confidence = per-residue score * 100 (ints);
     rows with ALC < ``min_alc`` are dropped; sorted by ALC descending, as PEAKS does.
     ``precursor_tol_ppm``: drop predictions whose mass is not within this tolerance of the
@@ -537,12 +552,15 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
         on = ["scan", "feature_id"] if ("feature_id" in p.columns and "feature_id" in d.columns) else ["scan"]
         if on == ["scan"]:
             p = p.drop_duplicates("scan")
-        d = d.drop(columns=[c for c in ("mz", "rt", "area") if c in d.columns]).merge(
-            p[[c for c in p.columns if c in on + ["mz", "rt", "area", "feature_id"]]], on=on, how="left")
+        cols = ["mz", "rt", "rt_min", "area", "feature_id"]
+        d = d.drop(columns=[c for c in cols if c in d.columns and c not in on]).merge(
+            p[[c for c in p.columns if c in on + cols]], on=on, how="left")
     if "mz" not in d.columns:
         d["mz"] = d["exp_mz"]
     d["mz"] = d["mz"].fillna(d["exp_mz"])
-    for c, v in (("rt", np.nan), ("area", np.nan), ("feature_id", 0)):
+    if "rt_min" not in d.columns:
+        d["rt_min"] = d["rt"].astype(float) / 60.0 if "rt" in d.columns else np.nan
+    for c, v in (("area", np.nan), ("feature_id", 0)):
         if c not in d.columns:
             d[c] = v
     lc = d["per_residue_scores"].map(lambda a: np.clip(np.asarray(a, dtype=float), 0, 1) * 100)
@@ -571,7 +589,7 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
         "Length": stripped.str.len().to_numpy(),
         "m/z": d["mz"].astype(float).to_numpy(),
         "z": z.to_numpy(),
-        "RT": d["rt"].astype(float).to_numpy(),
+        "RT": d["rt_min"].astype(float).to_numpy(),
         "Area": d["area"].astype(float).to_numpy(),
         "Mass": mass.to_numpy(),
         "ppm": ppm.to_numpy(),
