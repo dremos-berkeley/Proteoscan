@@ -79,6 +79,7 @@ def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
     c["feature_id"] = e["feature_id"].reindex(q).fillna(0).to_numpy().astype(int)
     c["feature_area"] = e["area"].reindex(q).to_numpy()
     c["entry_rt"] = e["rt"].reindex(q).to_numpy()
+    c["entry_mz"] = e["mz"].reindex(q).to_numpy()
     c["entry_source"] = e["source"].reindex(q).to_numpy()
     c["raw_rt"] = (e["rt_min"].reindex(q).to_numpy() if "rt_min" in e else c["rt"].to_numpy())
     c["raw_mz"] = (e["precursor_mz"].reindex(q).to_numpy() if "precursor_mz" in e else np.nan)

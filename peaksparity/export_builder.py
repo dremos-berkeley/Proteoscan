@@ -59,6 +59,8 @@ def build_psms(df: pd.DataFrame, cfg: SearchConfig, sample_name: str = "Sample 1
     z = df["charge"].astype(int)
     mono_mass = df["exp_mass"] - df["isotope_error"].fillna(0) * C13
     mz = (mono_mass + z * PROTON) / z
+    if "entry_mz" in df:  # PEAKS reports the precursor entry's m/z (the feature's, when linked)
+        mz = pd.Series(np.where(df["entry_mz"].notna(), df["entry_mz"], mz), index=df.index)
     raw_mz = df["raw_mz"] if "raw_mz" in df else (df["exp_mass"] + z * PROTON) / z
     ppm = (mono_mass - df["calc_mass"]) / df["calc_mass"] * 1e6
     ptm = modseq.map(lambda s: ptm_names(s, cfg))
