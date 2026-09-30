@@ -130,8 +130,10 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
         merged = merge_passes(c1, c2, keep=candidates_per_spectrum + 2)
         new = merged.loc[merged["from_pass2"] == 1, [c for c in c2.columns if c in merged.columns]].reset_index(drop=True)
         if len(new):
+            ref = acc1[acc1["source_file"] == mzml.name]
             new = compute_features(new, mzml, ms2pip_model="HCD2021",
-                                   ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes)
+                                   ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes,
+                                   rt_reference=ref)
             new["from_pass2"] = 1
         old = merged[merged["from_pass2"] == 0]
         both = rerank(pd.concat([old, new], ignore_index=True, sort=False), keep=candidates_per_spectrum + 2)

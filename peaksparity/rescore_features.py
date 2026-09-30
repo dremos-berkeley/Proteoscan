@@ -170,13 +170,18 @@ def ms2pip_correlations(df: pd.DataFrame, mzml: str | Path, model: str = "HCD202
                          "residue_coverage": cov_both}, index=df.index)
 
 
-def deeplc_predictions(df: pd.DataFrame, calibrate_on: pd.Series | None = None) -> np.ndarray:
-    """Predicted RT (minutes) per PSM, calibrated on the confident target PSMs of the same run.
-    DeepLC's auto-calibration picks the best target PSMs by score when no reference is given."""
+def deeplc_predictions(df: pd.DataFrame, calibrate_on: pd.Series | None = None,
+                       reference_df: pd.DataFrame | None = None) -> np.ndarray:
+    """Predicted RT (minutes) per PSM, calibrated on confident target PSMs of the same run:
+    either rows of df flagged by `calibrate_on`, or an explicit `reference_df` (e.g. the PSMs
+    accepted in a first pass). DeepLC's auto-calibration is the last resort."""
     import deeplc
     psms = to_psmlist(df)
     try:
-        if calibrate_on is not None and calibrate_on.sum() >= 50:
+        if reference_df is not None and len(reference_df) >= 50:
+            ref = to_psmlist(reference_df.sample(min(len(reference_df), 5000), random_state=0))
+            preds = deeplc.predict_and_calibrate(psms, psm_list_reference=ref)
+        elif calibrate_on is not None and calibrate_on.sum() >= 50:
             ref = PSMList(psm_list=[p for p, keep in zip(psms, calibrate_on.to_numpy()) if keep])
             preds = deeplc.predict_and_calibrate(psms, psm_list_reference=ref)
         else:
@@ -206,7 +211,7 @@ def sequence_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def compute_features(df: pd.DataFrame, mzml: str | Path, ms2pip_model: str = "HCD2021",
                      ms2_tolerance: float = 0.5, processes: int = 8, do_rt: bool = True,
-                     do_ms2: bool = True) -> pd.DataFrame:
+                     do_ms2: bool = True, rt_reference: pd.DataFrame | None = None) -> pd.DataFrame:
     """Append feature columns to a copy of df (one run)."""
     out = df.copy()
     feats = sequence_features(out)
@@ -221,7 +226,7 @@ def compute_features(df: pd.DataFrame, mzml: str | Path, ms2pip_model: str = "HC
         log.info("DeepLC predictions for %d PSMs", len(out))
         top = (out["rank"] == 1) & (~out["is_decoy"]) if "rank" in out else ~out["is_decoy"]
         conf = top & (out["hyperscore"] >= out.loc[top, "hyperscore"].quantile(0.7))
-        out["pred_rt"] = deeplc_predictions(out, calibrate_on=conf)
+        out["pred_rt"] = deeplc_predictions(out, calibrate_on=conf, reference_df=rt_reference)
         out["delta_rt"] = out["rt"] - out["pred_rt"]
         out["abs_delta_rt"] = out["delta_rt"].abs()
     return out
