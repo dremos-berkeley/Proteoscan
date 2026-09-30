@@ -21,7 +21,7 @@ def raw_to_mzml(raw: str | Path, out_dir: str | Path, overwrite: bool = False) -
     out = out_dir / (raw.stem + ".mzML")
     if out.exists() and out.stat().st_size > 0 and not overwrite:
         return out
-    cmd = find_trfp() + ["-i", str(raw), "-o", str(out_dir), "-f", "2", "-p"]
+    cmd = find_trfp() + ["-i", str(raw), "-o", str(out_dir), "-f", "2"]
     subprocess.run(cmd, check=True)
     if not out.exists():
         raise RuntimeError(f"conversion produced no file: {out}")
