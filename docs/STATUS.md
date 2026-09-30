@@ -1,38 +1,51 @@
-# Status and known limitations (updated 2026-09-25 22:00 UTC)
+# Status and known limitations (updated 2026-09-30)
 
-Reference: DrewR_Adam_91526_DDA_OT_4 (Jurkat, Lumos, ion-trap HCD), PEAKS Studio DL boost on:
-7,524 PSMs / 3,472 peptides / 990 protein groups.
+Reference: DrewR_Adam_91526_DDA_OT_4 (Jurkat, Lumos, ion-trap HCD), PEAKS Studio, DL boost on:
+7,524 PSM rows / 3,472 peptides / 990 protein groups. Concordance = exact modified sequence,
+scan and charge (PSM); exact modified sequence (peptide); shared accession (protein group).
 
-| stage | state | evidence |
-|---|---|---|
-| export format round-trip | exact | 99 tests, all 4 reference dirs |
-| protein inference / grouping / scores | exact except group numbering among ties | docs/PROTEIN_INFERENCE.md |
-| featureless precursor correction | 92% agreement with PEAKS's corrected m/z | precursors_test |
-| MS1 feature detection + chimera precursors | in progress | |
-| candidate generation (Comet, instrument precursor) | 75% of PEAKS PSMs among top-5 candidates | comet_OT4 |
-| rescoring (mokapot TDA) | 4,453 PSMs at 1% (recall of PEAKS 0.45) with misaligned MS2 feature; rerun pending | rescore_exp1 |
-| rescoring (PEAKS-imitation, CV) | 5,471 PSMs at 1% (recall 0.55, precision 0.75), rerun pending | rescore_exp1 |
-| de novo (Casanovo, high-res model) | 12% full-sequence accuracy on ion-trap data; unusable as is | denovo_casanovo |
+## Exactly reproduced from PEAKS's own tables
+| item | state |
+|---|---|
+| CSV formats (all 8 tables, Java number formatting) | byte-exact round trip |
+| protein inference, grouping, scores, coverage, areas | exact; group numbering among ties differs |
+| PTM profile | byte-identical |
+| modified-peptide table | all cells except 8 RT-shift values (0.0001 off) |
+| precursor list (given PEAKS's features) | 98.8% of the precursors behind PEAKS PSMs |
+| I/L variant rows and protein lists per PSM | reproduced |
 
-De novo: Casanovo's released model is trained on Orbitrap MS2 and fails on ion-trap spectra
-(2% agreement with PEAKS's de novo-only calls). Options: fine-tune Casanovo on the PEAKS-labelled
-ion-trap PSMs once the HeLa PEAKS runs exist (tens of thousands of training spectra), or implement a
-PEAKS-style dynamic-programming de novo for low-resolution data. Until then the denovoOnly export
-is produced but not concordant.
+## End-to-end from raw data (Comet + rescoring), Jurkat run
+| configuration | PSMs reported | PSM recall | PSM precision | peptide recall | protein-group recall |
+|---|---|---|---|---|---|
+| Comet e-value only | 1,198 | 0.13 | 0.84 | | |
+| + rescoring (mokapot), corrected precursors | 11,126 | 0.74 | 0.50 | 0.82 | 0.95 |
+| + PEAKS-imitation model (cross-validated) | 10,722 | 0.75 | 0.52 | 0.83 | 0.95 |
+| + two-pass search with protein support, imitation | 14,609 | 0.81 | 0.41 | 0.88 | 0.95 |
+| same, cut at PEAKS's PSM count | 7,595 | 0.67 | 0.66 | 0.78 | 0.88 |
 
-## Session cut-off note (2026-09-25 ~22:15 UTC)
-Usage limit reached mid-run. State at cut-off:
-- Rescoring experiment 1 (instrument precursors, partly corrupted MS2 feature): mokapot 4,908 PSMs at 1%
-  (recall 0.47); PEAKS-imitation CV 7,071 PSMs at 1% (recall 0.63, precision 0.67). Candidate ceiling 72%.
-- Fixed: MS2PIP `correlate` misattaches vectors across PSMs sharing a spectrum; features are now
-  computed from `predict_batch` plus our own matching (peaksparity/rescore_features.py).
-- Experiment 2 launched on the corrected-precursor Comet candidates (ceiling 76% top-3):
-  /drive_a/drew/peaks-parity-work/rescore_exp2/run.log, results.json when finished.
-- Still running as background workers (write their own REPORT.md / repo files):
-  features (/drive_a/drew/peaks-parity-work/features), monoiso tuning (monoiso_eval),
-  PTM/modified-peptide tables (peaksparity/ptm_tables.py). Baseline Sage report is at
-  /drive_a/drew/peaks-parity-work/baseline_sage/REPORT.md (unread).
-Next steps: read the three worker reports and commit their files; wire features.py into
-precursors.build_precursor_list (feature-derived entries) and rerun Comet on the expanded mzML
-(expect candidate coverage >90%); rerun rescoring; run pipeline.py end-to-end with --ref for the
-concordance report; ingest the Windows PEAKS exports (decoy-on) when Drew copies them.
+On scans identified by both, the peptide is identical in 97% of cases.
+
+Entrapment validation (human + shuffled entrapment database of equal size): measured false
+discovery proportion 0.5% at the PEAKS-style filter and 0.9% at nominal 1% PSM FDR (single
+pass). The pipeline therefore reports more correct identifications than PEAKS at the same
+nominal error rate; "precision" against PEAKS is low because PEAKS reports fewer PSMs, not
+because the extra PSMs are wrong. Two-pass entrapment validation: pending.
+
+## Findings that shaped the design
+- Feature detection is not the bottleneck: our detector (70% recall of PEAKS features) and
+  PEAKS's own feature list give the same candidate coverage (78%).
+- The bottleneck is candidate ranking on weak/chimeric spectra. PEAKS rescues these with its
+  protein feature; the two-pass search imitates that (coverage 83%).
+- Restricting to zero isotope error loses recall (0.67 vs 0.75): keep Comet's -1..3 window.
+- Sage needs ~300-500 GB for semi-tryptic + 3 variable mods; Comet needs 3 GB. Comet is the engine.
+- MS2PIP 4.2 `correlate` misattaches vectors across PSMs sharing a spectrum; features are computed
+  from `predict_batch` plus our own peak matching.
+
+## Open items
+- PEAKS unfiltered export with decoys (running on the Windows machine): gives PEAKS's score for
+  every PSM, needed to model its score and threshold rather than only its accepted set.
+- De novo for ion-trap spectra: Casanovo's released model reaches 12% full-sequence accuracy on
+  this data; needs fine-tuning on ion-trap PSMs. The denovoOnly export is not yet concordant.
+- features.csv export and Area columns from our own feature detector.
+- HeLa benchmark (PXD004940) runs through the pipeline and through PEAKS.
+- macOS packaging and the browser results viewer (in progress).
