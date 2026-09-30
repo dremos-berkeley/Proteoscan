@@ -28,11 +28,28 @@ SAGE_FEATURES = [
 ]
 
 
+# DeepLC 4 ignores mass-only modifications, so known deltas are written as Unimod names.
+_NAMED_MODS = [(57.0215, "Carbamidomethyl"), (15.9949, "Oxidation"), (0.9840, "Deamidated"), (42.0106, "Acetyl"),
+               (71.0371, "Propionamide"), (-17.0265, "Gln->pyro-Glu"), (-18.0106, "Glu->pyro-Glu"), (43.0058, "Carbamyl"),
+               (79.9663, "Phospho"), (14.0157, "Methyl")]
+_DELTA_RE = re.compile(r"\[([+-]\d+\.\d+)\]")
+
+
+def name_mods(proforma: str) -> str:
+    def rep(m):
+        d = float(m.group(1))
+        for delta, name in _NAMED_MODS:
+            if abs(d - delta) < 0.005:
+                return f"[{name}]"
+        return m.group(0)
+    return _DELTA_RE.sub(rep, proforma)
+
+
 def to_psmlist(df: pd.DataFrame, run_name: str | None = None) -> PSMList:
     psms = []
     for r in df.itertuples(index=False):
         psms.append(PSM(
-            peptidoform=f"{r.peptide_sage}/{int(r.charge)}",
+            peptidoform=f"{name_mods(r.peptide_sage)}/{int(r.charge)}",
             spectrum_id=str(int(r.scan)),
             run=run_name or str(r.source_file),
             is_decoy=bool(r.is_decoy),
@@ -103,7 +120,12 @@ def ms2pip_correlations(df: pd.DataFrame, mzml: str | Path, model: str = "HCD202
     intensities), ms2_frac_pred_found, longest_b_obs, longest_y_obs, n_ions_obs, residue_coverage."""
     from ms2pip.core import predict_batch
     psms = to_psmlist(df)
-    preds = predict_batch(psms, model=model, processes=processes)
+    preds = []
+    batch = 100_000  # bounds MS2PIP memory to a few GB
+    for start in range(0, len(psms), batch):
+        for r in predict_batch(PSMList(psm_list=list(psms[start:start + batch])), model=model, processes=processes):
+            r.psm_index += start
+            preds.append(r)
     store = SpectrumStore(mzml)
     n = len(df)
     corr = np.zeros(n); cos = np.zeros(n); frac = np.zeros(n)
@@ -153,11 +175,19 @@ def deeplc_predictions(df: pd.DataFrame, calibrate_on: pd.Series | None = None) 
     DeepLC's auto-calibration picks the best target PSMs by score when no reference is given."""
     import deeplc
     psms = to_psmlist(df)
-    if calibrate_on is not None and calibrate_on.sum() >= 50:
-        ref = PSMList(psm_list=[p for p, keep in zip(psms, calibrate_on.to_numpy()) if keep])
-        preds = deeplc.predict_and_calibrate(psms, psm_list_reference=ref)
-    else:
-        preds = deeplc.predict_and_calibrate(psms)
+    try:
+        if calibrate_on is not None and calibrate_on.sum() >= 50:
+            ref = PSMList(psm_list=[p for p, keep in zip(psms, calibrate_on.to_numpy()) if keep])
+            preds = deeplc.predict_and_calibrate(psms, psm_list_reference=ref)
+        else:
+            preds = deeplc.predict_and_calibrate(psms)
+    except Exception as e:  # too few confident PSMs to calibrate (tiny inputs): uncalibrated fallback
+        log.warning("DeepLC calibration failed (%s); using uncalibrated predictions scaled to the RT range", e)
+        raw = np.asarray(deeplc.predict(psms), dtype=float)
+        rt = df["rt"].to_numpy(float)
+        if raw.std() > 0 and len(rt) > 1:
+            raw = (raw - raw.mean()) / raw.std() * rt.std() + rt.mean()
+        return raw
     return np.asarray(preds, dtype=float)
 
 

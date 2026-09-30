@@ -1,0 +1,28 @@
+# MS1 feature detection for Lumos / Orbitrap Fusion, 120k Orbitrap MS1 centroided by
+# ThermoRawFileParser.  Chosen on DrewR_Adam_91526 Samples 4 and 1 against PEAKS features.csv
+# (see /drive_a/drew/peaks-parity-work/features/REPORT.md).  Keys are detect_features() kwargs.
+algorithm: traces            # peaksparity.feature_traces (beat FFC, FeatureFindingMetabo, Multiplex)
+threads: 16
+openms:                      # detector parameters (feature_traces.DEFAULTS for the rest)
+  trace_ppm: 6.0             # centroid linking tolerance between consecutive MS1 scans
+  trace_gap: 1               # scans a trace may skip
+  valley_ratio: 0.5          # split elution peaks at valleys < 0.5 x smaller neighbouring max
+  smooth: 1                  # triangular smoothing half-width (scans) for apex/valley finding
+  min_points: 2              # centroids per elution peak (PEAKS keeps 1-2 scan features too)
+  iso_ppm: 8.0
+  min_corr: 0.3              # Pearson of isotope trace vs mono elution peak
+  iso_min_points: 2
+  min_fit: 0.6               # cosine to averagine envelope
+  score_power: 3.0
+  charge_low: 1
+  charge_high: 8
+  max_isotopes: 6
+# re-quantification on MS1 centroids
+boundary: hull               # keep the detector's RT range (walk widens it; worse area agreement)
+xic_ppm: 5.0
+area_isotopes: 2             # PEAKS Area = trapezoid(mono + M+1 XIC) over [RT Begin, RT End], RT in min
+area_scale: 1.0
+apex_from: xic
+# MS2 linking written by the CLI (PEAKS rule: RT +/- 0.02 min, isotope in window)
+ms2_rt_tolerance: 0.02
+ms2_min_window_fraction: 0.2

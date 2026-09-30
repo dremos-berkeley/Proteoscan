@@ -44,4 +44,4 @@ version = { attr = "peaksparity.__version__" }
 include = ["peaksparity*"]
 
 [tool.setuptools.package-data]
-peaksparity = ["ui_assets/*"]
+peaksparity = ["ui_assets/*", "data/*"]

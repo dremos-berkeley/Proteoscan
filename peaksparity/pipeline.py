@@ -56,7 +56,7 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
         feats = pd.read_parquet(features_path)
     else:
         from .features import detect_features, load_config
-        fcfg = Path(__file__).resolve().parents[1] / "configs" / "features_lumos_120k.yml"
+        fcfg = Path(__file__).resolve().parent / "data" / "features_lumos_120k.yml"
         kw = {k: v for k, v in load_config(fcfg).items() if not k.startswith("ms2_")} if fcfg.exists() else {}
         feats = detect_features(str(mzml), **kw)
         feats.to_parquet(out / "ms1_features.parquet")

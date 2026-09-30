@@ -16,7 +16,7 @@ inspect the PEAKS binary.
 
 ## Stages
 
-1. `convert`   Thermo .raw -> mzML (ThermoRawFileParser; mono on macOS).
+1. `convert`   Thermo .raw -> mzML (ThermoRawFileParser; see docs/INSTALL_MACOS.md for the macOS route).
 2. `features`  MS1 feature detection: isotope envelopes, charge, monoisotopic m/z, RT
                range, area. Used to (a) correct precursor m/z and charge of each MS2,
                (b) split chimeric MS2 scans into one query per co-isolated feature
