@@ -44,7 +44,9 @@ def peaks_accepted(p):
 
 
 def features(df):
-    cols = [c for c in rf.FEATURE_COLUMNS + ["log_prot_support", "from_pass2"] if c in df.columns]
+    from peaksparity.ion_features import ION_FEATURE_COLUMNS
+    extra = ["log_prot_support", "from_pass2", "caa", "caa_pct", "tag_len", "max_caa_any_beam", "denovo_conf_mean", "denovo_exact"]
+    cols = [c for c in rf.FEATURE_COLUMNS + extra + ION_FEATURE_COLUMNS if c in df.columns]
     cols = list(dict.fromkeys(cols))
     return df[cols].astype(float).replace([np.inf, -np.inf], np.nan).fillna(0.0), cols
 
@@ -101,6 +103,12 @@ def main():
     parts = []
     for c in a.candidates:
         d = pd.read_parquet(c)
+        ion = Path(c).with_name("ion_features.parquet")
+        if ion.exists():  # optional extra fragment-series evidence (peaksparity.ion_features)
+            f = pd.read_parquet(ion)
+            if len(f) == len(d):
+                for col in f.columns:
+                    d[col] = f[col].to_numpy()
         d["modseq"] = d["peptide_sage"].map(canonical)
         d["key"] = key(d["scan"], d["modseq"], d["charge"])
         d["peaks_score"] = d["key"].map(score_by_key)
