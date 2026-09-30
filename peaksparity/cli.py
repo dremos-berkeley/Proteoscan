@@ -29,13 +29,23 @@ def cmd_concordance(a):
     conc_main(["--ref", a.ref, "--test", a.test, "--out", a.out])
 
 
+def cmd_ui(a, rest):
+    from .ui import main as ui_main
+    ui_main(rest)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="peaksparity")
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert", help="Thermo raw -> mzML"); c.add_argument("raw", nargs="+"); c.add_argument("--out", required=True); c.set_defaults(fn=cmd_convert)
     s = sub.add_parser("search", help="Sage search from a PEAKS-style config"); s.add_argument("mzml", nargs="+"); s.add_argument("--config", required=True); s.add_argument("--out", required=True); s.add_argument("--threads", type=int); s.add_argument("--chimera", action="store_true"); s.add_argument("--report-psms", type=int, default=1); s.add_argument("--chunks", type=int, default=1, help="split the FASTA into N chunks to bound memory"); s.set_defaults(fn=cmd_search)
     k = sub.add_parser("concordance", help="compare an export dir to a PEAKS reference"); k.add_argument("--ref", required=True); k.add_argument("--test", required=True); k.add_argument("--out", required=True); k.set_defaults(fn=cmd_concordance)
-    a = p.parse_args(argv)
+    u = sub.add_parser("ui", help="self-contained HTML results viewer (options: python -m peaksparity.ui -h)", add_help=False); u.set_defaults(fn=None)
+    a, rest = p.parse_known_args(argv)
+    if a.cmd == "ui":
+        return cmd_ui(a, rest)
+    if rest:
+        p.error("unrecognized arguments: " + " ".join(rest))
     a.fn(a)
 
 
