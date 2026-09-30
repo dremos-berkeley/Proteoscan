@@ -75,3 +75,17 @@ De novo agreement features (docs/DENOVO_FEATURES.md): CAA / tag / beam features 
 (scan, precursor) query raise the PEAKS-score imitation from CV Pearson 0.620 (base + ion features) to 0.631
 (score_prop_v2). The same features from PEAKS's own de novo reach 0.706. PEAKS's exported `CAA (%)` is the
 share of residues with Positional Confidence >= 2 %, and `Tag Length` = `Length`; neither is the de novo CAA.
+
+## Score imitation (2026-09-30)
+Trained on the PEAKS propionamide export (decoys included, scores down to 15), cross-validated by
+scan parity, evaluated by reproducing PEAKS's own accepted set (its 1% sequence-FDR threshold):
+| model | CV Pearson with PEAKS -10lgP | Jurkat at PEAKS threshold: recall / precision |
+|---|---|---|
+| base features | 0.61 | 0.55 / 0.79 |
+| + neutral-loss and 2+ ion evidence | 0.62 | 0.56 / 0.81 |
+| + de novo agreement (fine-tuned Casanovo) | 0.63 | 0.60 / 0.84 (all 4 files) |
+| ceiling: features from PEAKS's own de novo | 0.71 | 0.61 / 0.86 |
+Reference point: two PEAKS runs of the same file agree with each other at Pearson 0.53-0.78 and
+share 67-90% of accepted PSMs, depending on settings. Setting PEAKS's report filters to zero
+changes its de novo output (CAA agreement 1.00 -> 0.67) and its scores; default filters plus
+export-decoy is the right reference export.
