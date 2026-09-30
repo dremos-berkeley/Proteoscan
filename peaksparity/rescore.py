@@ -71,6 +71,10 @@ def train_imitation(df: pd.DataFrame, label: pd.Series, feature_cols=None, seed:
 
 def apply_imitation(model, df: pd.DataFrame) -> pd.DataFrame:
     X, _ = _features(df, model.feature_cols_)
+    missing = [c for c in model.feature_cols_ if c not in X.columns]
+    if missing:  # e.g. a model trained with de novo features applied to a run without them
+        log.warning("imitation model: %d feature(s) absent from this run, set to 0: %s", len(missing), missing)
+    X = X.reindex(columns=model.feature_cols_, fill_value=0.0)
     work = df.copy()
     p = model.predict_proba(X)[:, 1]
     work["score"] = np.log(p + 1e-9) - np.log(1 - p + 1e-9)

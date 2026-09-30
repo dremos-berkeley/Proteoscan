@@ -62,7 +62,7 @@ def fit(df, y):
 
 def predict(m, df):
     X, _ = features(df)
-    return m.predict(X[m.feature_cols_])
+    return m.predict(X.reindex(columns=m.feature_cols_, fill_value=0.0))  # absent features -> 0
 
 
 def evaluate(df, pred, acc_by_file, peaks_thr_by_file):

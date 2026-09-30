@@ -71,3 +71,7 @@ Casanovo fine-tuned on the HeLa ion-trap PSMs (docs/DENOVO.md): held-out HeLa ac
 agrees with database identifications on only 4% of its de novo-only spectra on this data, so
 sequence-level concordance of the denovoOnly export is not a meaningful target on ion-trap data;
 the export is produced in the PEAKS layout with our model's calls and confidences.
+De novo agreement features (docs/DENOVO_FEATURES.md): CAA / tag / beam features from Casanovo calls on every
+(scan, precursor) query raise the PEAKS-score imitation from CV Pearson 0.620 (base + ion features) to 0.631
+(score_prop_v2). The same features from PEAKS's own de novo reach 0.706. PEAKS's exported `CAA (%)` is the
+share of residues with Positional Confidence >= 2 %, and `Tag Length` = `Length`; neither is the de novo CAA.
