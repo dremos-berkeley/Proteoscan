@@ -92,6 +92,8 @@ def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
     ok = set(best.loc[best["minus10lgp"] >= thr, "seqkey"])
     floor = min(thr, psm_floor)
     acc = t[t["seqkey"].isin(ok) & (t["minus10lgp"] >= floor)]
+    # the same peptide can win several precursor entries of one scan; PEAKS lists it once
+    acc = acc.sort_values("minus10lgp", ascending=False).drop_duplicates(["source_file", "scan", "peptide_sage", "charge"])
     n_t, n_d = int((~acc["is_decoy"]).sum()), int(acc["is_decoy"].sum())
     stats = dict(peptide_threshold=float(thr), psm_floor=float(floor), n_target_psms=n_t, n_decoy_psms=n_d,
                  psm_fdr=n_d / max(n_t, 1))

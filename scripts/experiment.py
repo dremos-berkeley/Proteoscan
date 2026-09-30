@@ -25,7 +25,7 @@ def export_and_compare(scored, cfg, sample, out, name, ref, fixed_count=None):
     top = best_per_spectrum(scored, "score")
     top["minus10lgp"] = minus10lgp(top["score"], top["is_decoy"])
     if fixed_count:
-        t = top[~top["is_decoy"]].sort_values("score", ascending=False).head(fixed_count)
+        t = top[~top["is_decoy"]].sort_values("score", ascending=False).drop_duplicates(["source_file", "scan", "peptide_sage", "charge"]).head(fixed_count)
         acc, st = t.copy(), dict(fixed_count=fixed_count)
     else:
         acc, st = peaks_filter(top, cfg)
@@ -54,6 +54,7 @@ def main():
     ap.add_argument("--comet-txt", required=True); ap.add_argument("--mzml", required=True)
     ap.add_argument("--config", required=True); ap.add_argument("--ref", required=True)
     ap.add_argument("--out", required=True); ap.add_argument("--entries"); ap.add_argument("--sample", default="Sample 4")
+    ap.add_argument("--pass2-txt", help="Comet result of the restricted second-pass search"); ap.add_argument("--pass1-dir", help="experiment dir of pass 1 (features.parquet)")
     ap.add_argument("--candidates", type=int, default=3); ap.add_argument("--processes", type=int, default=24)
     a = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
@@ -67,6 +68,13 @@ def main():
         c = read_comet(a.comet_txt, source_file=Path(a.mzml).name, fixed_mods=fixed)
         c = c[c["rank"] <= a.candidates].reset_index(drop=True)
         c["proteins"] = c["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
+        c["query_id"] = c["scan"]
+        if a.pass2_txt:
+            from peaksparity.twopass import merge_passes
+            c2 = read_comet(a.pass2_txt, source_file=Path(a.mzml).name, fixed_mods=fixed)
+            c2["proteins"] = c2["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
+            c2["query_id"] = c2["scan"]
+            c = merge_passes(c, c2, keep=a.candidates + 2)
         if a.entries:
             c = attach_entries(c, pd.read_parquet(a.entries))
             c["rt"] = pd.Series(c["raw_rt"]).fillna(c["rt"]).to_numpy()
@@ -74,6 +82,16 @@ def main():
             c["delta_best"] = best - c["hyperscore"]
         feat = compute_features(c, a.mzml, ms2pip_model="HCD2021", ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=a.processes)
         feat.to_parquet(out / "features.parquet")
+    if a.pass1_dir:
+        from peaksparity.twopass import add_protein_features, protein_support
+        p1 = pd.read_parquet(Path(a.pass1_dir) / "features.parquet")
+        p1s = rescore_tda(p1); t1 = best_per_spectrum(p1s, "score"); t1["minus10lgp"] = minus10lgp(t1["score"], t1["is_decoy"])
+        acc1, _ = peaks_filter(t1, cfg)
+        support, seqs = protein_support(acc1)
+        feat = add_protein_features(feat, support, seqs)
+        import peaksparity.rescore_features as rf
+        if "log_prot_support" not in rf.FEATURE_COLUMNS:
+            rf.FEATURE_COLUMNS.append("log_prot_support")
     peaks = pd.read_csv(Path(a.ref) / "db.psms.csv")
     pk = set(peaks["Scan"].astype(int).astype(str) + "|" + peaks["Peptide"] + "|" + peaks["z"].astype(str))
     feat["modseq"] = feat["peptide_sage"].map(canonical)
