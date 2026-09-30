@@ -7,6 +7,9 @@ Thermo raw files, on macOS and Linux.
 Status: under construction. See `docs/ARCHITECTURE.md` for the stage design and
 `docs/PEAKS_EXPORT_FORMAT.md` for the export format we reproduce.
 
+Linux below; macOS (Apple Silicon or Intel): see `docs/INSTALL_MACOS.md`, then check any
+install with `python scripts/check_install.py`.
+
 ```bash
 conda env create -f env/environment.yml
 conda activate peaksparity

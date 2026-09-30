@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import importlib
+import inspect
 import json
 import multiprocessing as mp
 import os
@@ -93,9 +94,10 @@ def check_platform() -> None:
     report(OK, "python", f"{sys.version.split()[0]} {sys.executable}")
     ram = total_ram_gb()
     if ram is not None:
-        st = OK if ram >= 16 else WARN
-        report(st, "RAM", f"{ram:.0f} GB" + ("" if ram >= 16 else " (a 3 GB raw file needs >= 16 GB with --features none; "
-                                                            "MS1 features currently need up to 27 GB)"))
+        st = OK if ram >= 32 else WARN
+        report(st, "RAM", f"{ram:.0f} GB" + ("" if ram >= 32 else
+               " (a 3 GB raw file currently peaks at ~34 GB in the MS2PIP stage and will swap; "
+               "see docs/INSTALL_MACOS.md, 'Run time and memory')"))
     report(OK, "CPUs", str(os.cpu_count()))
     report(OK, "multiprocessing start method", mp.get_start_method(allow_none=True) or "(default)")
 
@@ -415,7 +417,7 @@ def _timed(stage: str, fn, timings: dict):
     return wrapper
 
 
-def smoke_test(work: Path, threads: int, processes: int) -> bool:
+def smoke_test(work: Path, threads: int, processes: int, two_pass: bool = False) -> bool:
     print(f"\n== Smoke test (work dir {work})")
     import numpy as np
     import pandas as pd
@@ -452,16 +454,26 @@ def smoke_test(work: Path, threads: int, processes: int) -> bool:
         (rescore_features, "ms2pip_correlations"): "MS2PIP features",
         (rescore_features, "deeplc_predictions"): "DeepLC features",
         (pipeline, "rescore_tda"): "mokapot rescoring",
+        (pipeline, "stage_two_pass"): "two-pass search",
         (pipeline, "write_export"): "PEAKS CSV export",
     }
+    patches = {k: v for k, v in patches.items() if hasattr(*k)}
     for (mod, name), stage in patches.items():
         saved[(mod, name)] = getattr(mod, name)
         setattr(mod, name, _timed(stage, getattr(mod, name), timings))
     out = work / "run"
     t = time.time()
     try:
+        kw = {}
+        if "two_pass" in inspect.signature(pipeline.run).parameters:
+            # The second pass re-scores only candidates new in pass 2; on a data set this small
+            # there are fewer than the 50 confident PSMs DeepLC needs to calibrate them, so the
+            # pass is skipped unless --two-pass is given (full-size runs are unaffected).
+            kw["two_pass"] = two_pass
+            if not two_pass:
+                report(OK, "two-pass stage", "skipped on the synthetic set (use --two-pass to include it)")
         stats = pipeline.run(cfg, [mzml], out, mode="tda", processes=processes, sample_name="Sample 1",
-                             candidates_per_spectrum=3)
+                             candidates_per_spectrum=3, **kw)
     except Exception as e:
         report(FAIL, "pipeline.run", f"{type(e).__name__}: {e}")
         traceback.print_exc()
@@ -484,10 +496,6 @@ def smoke_test(work: Path, threads: int, processes: int) -> bool:
         report(OK if good else FAIL, f"feature column {col}",
                f"n={len(v)} mean={np.nanmean(v):.3f} sd={np.nanstd(v):.3f}" if len(v) else "missing")
         ok &= bool(good)
-    tgt = feat[(feat["rank"] == 1) & ~feat["is_decoy"]]
-    if len(tgt) > 10:
-        r = np.corrcoef(tgt["rt"], tgt["pred_rt"])[0, 1]
-        report(OK, "DeepLC vs synthetic RT", f"Pearson r = {r:.2f} on {len(tgt)} rank-1 targets (information only)")
 
     export = Path(stats["export_dir"])
     files = sorted(p.name for p in export.glob("*.csv"))
@@ -519,6 +527,8 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-smoke", action="store_true", help="only check tools and imports")
     ap.add_argument("--threads", type=int, default=min(4, os.cpu_count() or 1), help="Comet threads")
     ap.add_argument("--processes", type=int, default=min(4, os.cpu_count() or 1), help="MS2PIP processes")
+    ap.add_argument("--two-pass", action="store_true",
+                    help="also run the pipeline's second (protein-restricted) search pass")
     ap.add_argument("--start-method", choices=["spawn", "fork", "forkserver"], default="spawn",
                     help="multiprocessing start method (spawn = the macOS default; used on every platform "
                          "so that a Linux run exercises the macOS code path)")
@@ -543,7 +553,7 @@ def main(argv=None) -> int:
             work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="peaksparity_check_"))
             work.mkdir(parents=True, exist_ok=True)
             try:
-                ok_smoke = smoke_test(work, a.threads, a.processes)
+                ok_smoke = smoke_test(work, a.threads, a.processes, a.two_pass)
             finally:
                 if not a.work and not a.keep:
                     shutil.rmtree(work, ignore_errors=True)
