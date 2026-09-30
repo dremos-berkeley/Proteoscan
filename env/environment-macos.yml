@@ -1,0 +1,63 @@
+# peaks-parity on macOS, Apple Silicon (osx-arm64). Full instructions: docs/INSTALL_MACOS.md
+#
+#   conda env create -f env/environment-macos.yml
+#   conda activate peaksparity
+#   bash scripts/install_trfp.sh          # ThermoRawFileParser 2.0 (no native conda build, see doc)
+#   pip install --no-deps -e .
+#   python scripts/check_install.py
+#
+# Intel Macs: env/environment-macos-intel.yml (Comet has to be built from source there).
+#
+# Requires macOS >= 14 (Sonoma): the Comet 2026.01.1 arm64 binary is built for 14.0. On
+# macOS 12/13 build Comet from source (docs/INSTALL_MACOS.md); everything else runs on >= 12.
+#
+# Every compiled package comes from conda-forge/bioconda so that exactly one OpenMP runtime
+# (conda's llvm-openmp) is loaded. The PyPI wheels of torch and scikit-learn each bundle their
+# own libomp.dylib and the PyPI wheels of lightgbm and xgboost need Homebrew's libomp; mixing
+# them is the usual cause of "OMP: Error #15 ... libomp.dylib already initialized".
+# pip installs only pure-Python packages plus Rust/C wheels without OpenMP.
+#
+# The pins below solve together for osx-arm64, osx-64 and linux-64 (checked 2026-09-30 with
+# CONDA_SUBDIR=osx-arm64 conda create --dry-run). Differences from the Linux reference env
+# (env/environment.yml): numpy 2.3 instead of 1.26 (bioconda's macOS pyopenms 3.5.0 needs
+# numpy >= 2) and torch 2.10 instead of 2.6 (conda-forge pytorch 2.6 cannot be co-installed
+# with pyopenms 3.5.0; DeepLC 4.5 needs torch >= 2.6). The same pins on linux-64 pass
+# scripts/check_install.py.
+name: peaksparity
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  # --- numerics / data --------------------------------------------------------------------
+  - numpy=2.3.5
+  - pandas=2.3.3            # ms2pip and deeplc require pandas < 3
+  - scipy=1.17.1
+  - scikit-learn=1.9.1
+  - lightgbm=4.7.0
+  - xgboost=2.1.4           # ms2pip requires xgboost < 3; conda build uses conda's llvm-openmp
+  - pyarrow=21.0.0          # pyopenms 3.5.0 is built against libarrow 21.0
+  - numba=0.67.0
+  - lxml
+  - matplotlib-base         # mokapot imports matplotlib
+  - tqdm
+  - click=8
+  - pyyaml=6.0.3
+  - pytest
+  - pyahocorasick=2.3.1
+  # --- mass spectrometry --------------------------------------------------------------------
+  - pyopenms=3.5.0          # bioconda py311 osx-arm64 build
+  - pyteomics=4.7.5         # ms2pip and psm-utils require pyteomics < 5
+  - comet-ms=2026011        # Comet 2026.01 rev. 1, same as Linux; arm64 binary for macOS >= 14
+  # --- deep learning ------------------------------------------------------------------------
+  - pytorch=2.10.0          # conda-forge CPU build (MPS is not used: DeepLC picks CUDA or CPU)
+  - pip:
+      - ms2pip==4.2.0
+      - deeplc==4.5.0
+      - mokapot==0.10.0
+      - psm-utils==1.5.5
+# Optional extras (not needed by `peaksparity run`):
+#   Sage search engine:  conda install -c bioconda sage-proteomics=0.14.7   (osx-arm64 build exists)
+#   Casanovo de novo:    separate env; casanovo 5.2.1 requires numpy < 2 (docs/INSTALL_MACOS.md)
+#   Percolator:          no macOS conda build; mokapot is used instead

@@ -27,6 +27,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from dataclasses import replace as dataclasses_replace
+
 from .comet_search import read_comet, run_comet
 from .config import SearchConfig
 from .export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
@@ -84,6 +86,66 @@ def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
     return c
 
 
+def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list[Path], fixed: dict,
+                   processes: int, candidates_per_spectrum: int) -> pd.DataFrame:
+    """PEAKS DB-style second pass: rescore pass 1, accept, re-search every query against the
+    accepted proteins (plus their decoys), merge candidates and add the decoy-fused protein-support
+    feature. Validated by paired entrapment (docs/STATUS.md)."""
+    from .decoys import read_fasta
+    from .twopass import add_protein_features, merge_passes, protein_support, rerank
+    import peaksparity.rescore_features as rf
+    pq = out / "candidates_features_2pass.parquet"
+    if pq.exists():
+        feat2 = pd.read_parquet(pq)
+        if "log_prot_support" not in rf.FEATURE_COLUMNS:
+            rf.FEATURE_COLUMNS.append("log_prot_support")
+        return feat2
+    scored1 = rescore_tda(feat)
+    top1 = best_per_spectrum(scored1, "score")
+    top1["minus10lgp"] = minus10lgp(top1["score"], top1["is_decoy"])
+    acc1, st1 = peaks_filter(top1, cfg)
+    log.info("pass 1: %d target PSMs accepted", len(acc1))
+    ids = set()
+    for p in acc1["proteins"]:
+        for x in str(p).split(";"):
+            if not x.startswith("#DECOY#"):
+                ids.add(x.split()[0])
+    sub_fasta = out / "pass1_proteins.fasta"
+    with open(sub_fasta, "w") as fh:
+        for h, seq in read_fasta(cfg.database):
+            if h.split()[0] in ids:
+                fh.write(f">{h}\n{seq}\n")
+    cfg2 = dataclasses_replace(cfg, database=str(sub_fasta))
+    parts = []
+    for mzml in mzmls:
+        rdir = out / mzml.stem
+        entries = pd.read_parquet(rdir / "precursors.parquet")
+        exp_mzml = rdir / (mzml.stem + ".expanded.mzML")
+        txt = run_comet(cfg2, [exp_mzml], rdir / "comet_pass2", num_output_lines=candidates_per_spectrum + 2)[0]
+        c2 = read_comet(txt, source_file=mzml.name, fixed_mods=fixed)
+        c2["proteins"] = c2["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
+        c2 = attach_entries(c2, entries)
+        c2["rt"] = c2["raw_rt"].fillna(c2["rt"])
+        c1 = feat[feat["source_file"] == mzml.name]
+        merged = merge_passes(c1, c2, keep=candidates_per_spectrum + 2)
+        new = merged.loc[merged["from_pass2"] == 1, [c for c in c2.columns if c in merged.columns]].reset_index(drop=True)
+        if len(new):
+            new = compute_features(new, mzml, ms2pip_model="HCD2021",
+                                   ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes)
+            new["from_pass2"] = 1
+        old = merged[merged["from_pass2"] == 0]
+        both = rerank(pd.concat([old, new], ignore_index=True, sort=False), keep=candidates_per_spectrum + 2)
+        parts.append(both)
+    feat2 = pd.concat(parts, ignore_index=True, sort=False)
+    support, seqs = protein_support(acc1)
+    feat2 = add_protein_features(feat2, support, seqs)
+    if "log_prot_support" not in rf.FEATURE_COLUMNS:
+        rf.FEATURE_COLUMNS.append("log_prot_support")
+    feat2.to_parquet(pq)
+    log.info("pass 2: %d candidates (%d proteins in the restricted database)", len(feat2), len(ids))
+    return feat2
+
+
 def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
     """PEAKS: the -10lgP threshold is set where the FDR over distinct sequences (I = L, best PSM
     each) reaches cfg.peptide_fdr; PSMs of accepted sequences are listed down to -10lgP 20."""
@@ -104,7 +166,7 @@ def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
 
 def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", model_path: str | None = None,
         sample_name: str = "Sample 1", processes: int = 8, ref: str | None = None,
-        features_path: str | None = None, candidates_per_spectrum: int = 3) -> dict:
+        features_path: str | None = None, candidates_per_spectrum: int = 3, two_pass: bool = True) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     stats: dict = {}
@@ -136,6 +198,8 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
                                           ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes))
         feat = pd.concat(parts, ignore_index=True)
         feat.to_parquet(scored_pq)
+    if two_pass:
+        feat = stage_two_pass(feat, cfg, out, mzmls, fixed, processes, candidates_per_spectrum)
     if mode == "imitate":
         with open(model_path, "rb") as fh:
             scored = apply_imitation(pickle.load(fh), feat)
@@ -189,11 +253,12 @@ def main(argv=None):
     ap.add_argument("--features", help="precomputed MS1 feature table (parquet), or 'none' to skip features")
     ap.add_argument("--candidates", type=int, default=3, help="candidates kept per spectrum")
     ap.add_argument("--ref", help="PEAKS export dir to compare against")
+    ap.add_argument("--single-pass", action="store_true", help="skip the protein-restricted second pass")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = SearchConfig.from_yaml(a.config)
     stats = run(cfg, [Path(m) for m in a.input], Path(a.out), a.mode, a.model, a.sample_name, a.processes,
-                a.ref, a.features, a.candidates)
+                a.ref, a.features, a.candidates, two_pass=not a.single_pass)
     print(json.dumps(stats, indent=2))
 
 

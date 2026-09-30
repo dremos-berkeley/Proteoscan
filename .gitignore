@@ -8,3 +8,5 @@ work/
 *.mzML
 *.raw
 *.parquet
+*.egg-info/
+build/

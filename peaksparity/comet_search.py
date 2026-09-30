@@ -7,10 +7,10 @@ canonical PSM table as sage_search.read_sage so the later stages are engine-agno
 """
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -28,12 +28,9 @@ def _default_params() -> str:
     exe = shutil.which("comet")
     if not exe:
         raise FileNotFoundError("comet not on PATH (conda install -c bioconda comet-ms)")
-    tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"comet_params_{os.getpid()}"
-    tmp.mkdir(parents=True, exist_ok=True)
-    subprocess.run([exe, "-p"], cwd=tmp, check=True, capture_output=True)
-    text = (tmp / "comet.params.new").read_text()
-    shutil.rmtree(tmp, ignore_errors=True)
-    return text
+    with tempfile.TemporaryDirectory(prefix="comet_params_") as tmp:  # portable (no hard-coded /tmp)
+        subprocess.run([exe, "-p"], cwd=tmp, check=True, capture_output=True)
+        return (Path(tmp) / "comet.params.new").read_text()
 
 
 def build_comet_params(cfg: SearchConfig, num_output_lines: int = 5, decoy_prefix: str = "DECOY_",

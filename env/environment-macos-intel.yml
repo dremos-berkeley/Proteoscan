@@ -1,0 +1,53 @@
+# peaks-parity on macOS, Intel (osx-64). Full instructions: docs/INSTALL_MACOS.md
+#
+# Same pins as env/environment-macos.yml (Apple Silicon) except Comet:
+#   * bioconda comet-ms 2026011 / 2026.01.1 for osx-64 contains an arm64 binary (upstream's
+#     "comet.macos.exe" has been arm64-only since v2026.01.0), so it cannot run on an Intel Mac.
+#     Build Comet v2026.01.1 from source after creating this env:
+#         xcode-select --install          # once; provides clang and make
+#         git clone --depth 1 --branch v2026.01.1 https://github.com/UWPR/Comet.git
+#         cd Comet && make && cp comet.exe "$CONDA_PREFIX/bin/comet"
+#     Fallback: the last x86_64 release binary, Comet v2025.03.0 (same comet.params keys):
+#         curl -fL -o "$CONDA_PREFIX/bin/comet" \
+#           https://github.com/UWPR/Comet/releases/download/v2025.03.0/comet.macos.exe
+#         chmod +x "$CONDA_PREFIX/bin/comet"
+#   * torch: PyPI has no macOS x86_64 wheel after torch 2.2.2 and DeepLC 4.5 needs >= 2.6, so
+#     torch must come from conda-forge here (pytorch 2.10.0 cpu_mkl build, MKL on llvm-openmp).
+#   * pip resolves numba/llvmlite x86_64 wheels only up to older versions; they come from conda.
+#
+#   conda env create -f env/environment-macos-intel.yml
+#   conda activate peaksparity
+#   (build or download Comet as above)
+#   bash scripts/install_trfp.sh
+#   pip install --no-deps -e .
+#   python scripts/check_install.py
+name: peaksparity
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy=2.3.5
+  - pandas=2.3.3
+  - scipy=1.17.1
+  - scikit-learn=1.9.1
+  - lightgbm=4.7.0
+  - xgboost=2.1.4
+  - pyarrow=21.0.0
+  - numba=0.67.0
+  - lxml
+  - matplotlib-base
+  - tqdm
+  - click=8
+  - pyyaml=6.0.3
+  - pytest
+  - pyahocorasick=2.3.1
+  - pyopenms=3.5.0
+  - pyteomics=4.7.5
+  - pytorch=2.10.0
+  - pip:
+      - ms2pip==4.2.0
+      - deeplc==4.5.0
+      - mokapot==0.10.0
+      - psm-utils==1.5.5

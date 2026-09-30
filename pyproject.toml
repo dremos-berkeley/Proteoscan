@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peaksparity"
+dynamic = ["version"]
+description = "Open-source DDA proteomics identification pipeline that reproduces PEAKS Studio exports"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Drew Ramos", email = "drew_ramos@berkeley.edu" }]
+requires-python = ">=3.11"
+# Install the conda environment first (env/environment.yml on Linux, env/environment-macos.yml
+# on macOS), then `pip install --no-deps -e .`. The list below documents what the code imports
+# and is already satisfied by those environments; without --no-deps pip only verifies it.
+# Comet and ThermoRawFileParser are executables and cannot be declared here.
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2,<3",
+    "pyarrow>=14",
+    "pyyaml>=6",
+    "numba>=0.59",
+    "pyopenms>=3.4",
+    "pyteomics>=4.7,<5",
+    "psm-utils>=1.5",
+    "ms2pip>=4.2,<5",
+    "deeplc>=4.5,<5",
+    "mokapot>=0.10,<0.11",
+    "lightgbm>=4",
+    "scikit-learn>=1.4",
+    "pyahocorasick>=2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+peaksparity = "peaksparity.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "peaksparity.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["peaksparity*"]
+
+[tool.setuptools.package-data]
+peaksparity = ["ui_assets/*"]

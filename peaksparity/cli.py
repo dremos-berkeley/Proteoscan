@@ -34,14 +34,22 @@ def cmd_ui(a, rest):
     ui_main(rest)
 
 
+def cmd_run(a, rest):
+    from .pipeline import main as pipeline_main
+    pipeline_main(rest)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="peaksparity")
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert", help="Thermo raw -> mzML"); c.add_argument("raw", nargs="+"); c.add_argument("--out", required=True); c.set_defaults(fn=cmd_convert)
     s = sub.add_parser("search", help="Sage search from a PEAKS-style config"); s.add_argument("mzml", nargs="+"); s.add_argument("--config", required=True); s.add_argument("--out", required=True); s.add_argument("--threads", type=int); s.add_argument("--chimera", action="store_true"); s.add_argument("--report-psms", type=int, default=1); s.add_argument("--chunks", type=int, default=1, help="split the FASTA into N chunks to bound memory"); s.set_defaults(fn=cmd_search)
     k = sub.add_parser("concordance", help="compare an export dir to a PEAKS reference"); k.add_argument("--ref", required=True); k.add_argument("--test", required=True); k.add_argument("--out", required=True); k.set_defaults(fn=cmd_concordance)
+    r = sub.add_parser("run", help="end-to-end pipeline, mzML/raw -> PEAKS-format export (options: peaksparity run -h)", add_help=False); r.set_defaults(fn=None)
     u = sub.add_parser("ui", help="self-contained HTML results viewer (options: python -m peaksparity.ui -h)", add_help=False); u.set_defaults(fn=None)
     a, rest = p.parse_known_args(argv)
+    if a.cmd == "run":
+        return cmd_run(a, rest)
     if a.cmd == "ui":
         return cmd_ui(a, rest)
     if rest:

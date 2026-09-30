@@ -60,13 +60,8 @@ def add_protein_features(cands: pd.DataFrame, support: dict[str, int], seqs: dic
     return out
 
 
-def merge_passes(pass1: pd.DataFrame, pass2: pd.DataFrame, keep: int = 5,
-                 query_col: str = "query_id") -> pd.DataFrame:
-    """Union of candidates per query; identical (query, peptide) rows are collapsed."""
-    p1 = pass1.copy(); p1["from_pass2"] = 0
-    p2 = pass2.copy(); p2["from_pass2"] = 1
-    both = pd.concat([p1, p2], ignore_index=True, sort=False)
-    both = both.sort_values(["from_pass2"]).drop_duplicates([query_col, "peptide_sage"], keep="first")
+def rerank(both: pd.DataFrame, keep: int = 5, query_col: str = "query_id") -> pd.DataFrame:
+    """Recompute rank and the delta columns per query after candidates were merged."""
     both = both.sort_values([query_col, "hyperscore"], ascending=[True, False])
     both["rank"] = both.groupby(query_col).cumcount() + 1
     both = both[both["rank"] <= keep].copy()
@@ -75,3 +70,14 @@ def merge_passes(pass1: pd.DataFrame, pass2: pd.DataFrame, keep: int = 5,
     both["delta_best"] = best - both["hyperscore"]
     both["delta_next"] = (both["hyperscore"] - nxt).fillna(both["hyperscore"])
     return both.reset_index(drop=True)
+
+
+def merge_passes(pass1: pd.DataFrame, pass2: pd.DataFrame, keep: int = 5,
+                 query_col: str = "query_id") -> pd.DataFrame:
+    """Union of candidates per query; identical (query, peptide) rows are collapsed, pass-1 rows
+    (which may already carry features) win."""
+    p1 = pass1.copy(); p1["from_pass2"] = 0
+    p2 = pass2.copy(); p2["from_pass2"] = 1
+    both = pd.concat([p1, p2], ignore_index=True, sort=False)
+    both = both.sort_values(["from_pass2"]).drop_duplicates([query_col, "peptide_sage"], keep="first")
+    return rerank(both, keep, query_col)
