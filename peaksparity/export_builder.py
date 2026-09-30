@@ -1,6 +1,7 @@
 """Stage 8: build PEAKS-format tables (psms, peptides) from the rescored PSM table.
 
-Protein tables come from `proteins.infer_proteins`; features / denovoOnly from their stages.
+Protein tables come from `proteins.infer_proteins`; features from
+`features_export.build_features_table`; denovoOnly from its stage.
 Column semantics follow docs/PEAKS_EXPORT_FORMAT.md.
 """
 from __future__ import annotations
@@ -97,14 +98,23 @@ def build_psms(df: pd.DataFrame, cfg: SearchConfig, sample_name: str = "Sample 1
 
 
 def build_peptides(psms: pd.DataFrame, sample_name: str = "Sample 1") -> pd.DataFrame:
-    """One row per modified peptide: its best PSM, summed Area, feature counts."""
+    """One row per modified peptide: its best PSM, the Area summed over its *distinct* features
+    and the number of distinct features (PEAKS sample 4: 3470/3472 areas and 3472/3472
+    #Feature; summing PSM rows, as before, matched 76%: it double-counts features hit by
+    several scans)."""
     p = psms.copy()
     p["_area"] = pd.to_numeric(p["Area"], errors="coerce")
-    p["_feat"] = (p["Feature Id"].fillna(0).astype(int) > 0).astype(int)
+    fid = p["Feature Id"].fillna(0).astype(int)
     order = p.sort_values("-10LgP", ascending=False)
-    best = order.drop_duplicates("Peptide").set_index("Peptide").drop(columns=["_area", "_feat"])
-    agg = p.groupby("Peptide").agg(_area=("_area", "sum"), _nfeat=("_feat", "sum"), _anyarea=("_area", lambda s: s.notna().any()))
+    best = order.drop_duplicates("Peptide").set_index("Peptide").drop(columns=["_area"])
+    fkey = ["Peptide", "Source File", "Feature Id"] if "Source File" in p.columns else ["Peptide", "Feature Id"]
+    uf = p[fid > 0].drop_duplicates(fkey)
+    agg = uf.groupby("Peptide").agg(_area=("_area", "sum"), _nfeat=("_area", "size"),
+                                    _anyarea=("_area", lambda s: s.notna().any()))
     best = best.join(agg)
+    best["_nfeat"] = best["_nfeat"].fillna(0).astype(int)
+    best["_anyarea"] = best["_anyarea"].astype("boolean").fillna(False).astype(bool)
+    best["_area"] = best["_area"].fillna(0.0)
     out = pd.DataFrame({
         "Peptide": best.index,
         "-10LgP": best["-10LgP"].to_numpy(),

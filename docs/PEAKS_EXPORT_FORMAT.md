@@ -182,7 +182,7 @@ This file has one row per (protein, peptide).
 
 ## <Sample>.db.features.csv
 
-Only features that carry a DB or de novo assignment are exported. Every row has exactly one of
+Only features that carry a DB or de novo assignment are exported (builder and rules: docs/FEATURES_EXPORT.md). Every row has exactly one of
 `DB Peptide` or `Denovo Peptide`. Sample 4 has 23,540 rows, while the summary says 81,484
 features were detected. `Feature Id`s are unique, and every non-zero psms `Feature Id` appears
 here.
@@ -197,12 +197,12 @@ here.
 | RT Begin, RT End | float | fixed4 / never | elution window |
 | Area | float | **jfloat** / never | e.g. `129882.984`, `3.0000496E7` |
 | Quality | float | fixed2 / never | always `0.00` in the references |
-| DB Peptide | str | str / never | **`;`-joined alternatives** (I/L variants, e.g. `LHLVIR;LHLVLR;IHIVLR`); empty if de novo |
-| -10LgP | float | fixed2 / never | `0.00` when no DB peptide |
+| DB Peptide | str | str / never | **`;`-joined alternatives** (I/L variants, e.g. `LHLVIR;LHLVLR;IHIVLR`): the peptides of the feature's top-scoring PSM rows, in no reproducible order; empty if de novo |
+| -10LgP | float | fixed2 / never | max over the feature's PSMs; `0.00` when no DB peptide |
 | Denovo Peptide | str | str / never | empty if DB |
 | ALC (%) | float | fixed1 / never | `0.0` when DB |
-| ppm | float | fixed1 / never | |
-| Accession | str | str / never | **`:`-joined**; empty for de novo |
+| ppm | float | fixed1 / never | uncalibrated: feature m/z vs peptide mass (psms ppm is recalibrated, ~8 ppm apart in S4) |
+| Accession | str | str / never | **`:`-joined**; proteins of the lexicographically first `DB Peptide` variant only; for de novo rows the de novo result's accessions (usually empty) |
 
 ## <Sample>.db.denovoOnly.csv
 

@@ -11,7 +11,7 @@ Stages (docs/ARCHITECTURE.md):
   4 features     fragment-intensity / retention-time / ion-series evidence per candidate
   5 rescore      target-decoy (mokapot) or PEAKS-imitation model
   6 filter       one peptide per (scan, precursor); threshold at the peptide-sequence FDR
-  7 export       PSMs (I/L variants split), peptides, proteins, PTM tables in PEAKS CSV format
+  7 export       PSMs (I/L variants split), peptides, proteins, features, PTM tables in PEAKS CSV format
   8 concordance  optional comparison with a PEAKS reference export
 Every stage caches its output under --out and is skipped when the cache exists.
 """
@@ -148,6 +148,32 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
     return feat2
 
 
+def stage_features_table(psms_tbl: pd.DataFrame, mzmls: list[Path], out: Path, features_path: str | None,
+                         sample_name: str, denovo_df: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    """<Sample>.db.features.csv: the MS1 features of each run that carry a PSM (or de novo result)."""
+    from .features_export import build_features_table, features_from_entries
+    if features_path == "none":
+        return None
+    parts = []
+    for mzml in mzmls:
+        rdir = out / mzml.stem
+        src = mzml.name.replace(".mzML", ".raw") if mzml.name.endswith(".mzML") else mzml.name
+        fpq = Path(features_path) if features_path else rdir / "ms1_features.parquet"
+        if fpq.exists():
+            f = pd.read_parquet(fpq)
+        elif (rdir / "precursors.parquet").exists():
+            log.warning("%s: no feature table at %s; features.csv RT Begin/End fall back to the apex", mzml.name, fpq)
+            f = features_from_entries(pd.read_parquet(rdir / "precursors.parquet"))
+        else:
+            continue
+        f = f.copy()
+        f["source_file"] = src
+        parts.append(f)
+    if not parts:
+        return None
+    return build_features_table(pd.concat(parts, ignore_index=True, sort=False), psms_tbl, denovo_df, sample_name)
+
+
 def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
     """PEAKS: the -10lgP threshold is set where the FDR over distinct sequences (I = L, best PSM
     each) reaches cfg.peptide_fdr; PSMs of accepted sequences are listed down to -10lgP 20."""
@@ -216,6 +242,11 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
     psms_tbl = build_psms(accepted, cfg, sample_name)
     psms_tbl = apply_protein_mapping(psms_tbl, cfg.database)
     peptides_tbl = build_peptides(psms_tbl, sample_name)
+    features_tbl = None
+    try:
+        features_tbl = stage_features_table(psms_tbl, mzmls, out, features_path, sample_name)
+    except Exception as e:  # secondary table; never fail the run for it
+        log.warning("features table skipped: %s", e)
     from .proteins import infer_proteins
     proteins_tbl, protpep_tbl = infer_proteins(peptides_tbl, cfg.database, score_threshold=cfg.protein_score_min,
                                                min_unique=cfg.protein_unique_peptides_min, psms_df=psms_tbl,
@@ -229,10 +260,14 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
                                            isolation_mz=iso)
     except Exception as e:  # PTM tables are secondary; never fail the run for them
         log.warning("PTM tables skipped: %s", e)
-    exp = assemble_export(psms_tbl, peptides_tbl, proteins_tbl, protpep_tbl, ptm_profile=ptm_profile,
-                          modified_peptides=modified, sample_name=sample_name, params=cfg.to_dict())
+    exp = assemble_export(psms_tbl, peptides_tbl, proteins_tbl, protpep_tbl, features=features_tbl,
+                          ptm_profile=ptm_profile, modified_peptides=modified, sample_name=sample_name,
+                          params=cfg.to_dict())
     export_dir = out / "export"
     write_export(exp, str(export_dir))
+    fid = psms_tbl["Feature Id"].fillna(0).astype(int)
+    stats.update(n_features_exported=0 if features_tbl is None else len(features_tbl),
+                 psm_feature_fraction=float((fid > 0).mean()) if len(fid) else None)
     stats.update(n_psm_rows=len(psms_tbl), n_peptides=len(peptides_tbl), n_protein_rows=len(proteins_tbl),
                  n_protein_groups=int(proteins_tbl["Protein Group"].nunique()), export_dir=str(export_dir),
                  elapsed_s=time.time() - t0)
