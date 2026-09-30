@@ -53,8 +53,10 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
     elif features_path:
         feats = pd.read_parquet(features_path)
     else:
-        from .features import detect_features
-        feats = detect_features(str(mzml))
+        from .features import detect_features, load_config
+        fcfg = Path(__file__).resolve().parents[1] / "configs" / "features_lumos_120k.yml"
+        kw = {k: v for k, v in load_config(fcfg).items() if not k.startswith("ms2_")} if fcfg.exists() else {}
+        feats = detect_features(str(mzml), **kw)
         feats.to_parquet(out / "ms1_features.parquet")
     entries = build_precursor_list(exp, feats, ms2)
     entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
