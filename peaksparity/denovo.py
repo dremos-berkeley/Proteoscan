@@ -255,7 +255,7 @@ def read_mztab(path: str | Path, mgf: str | Path | None = None) -> pd.DataFrame:
     ref = d["spectra_ref"].str.split(":", n=1).str[1]
     scan = ref.str.extract(r"scan=(\d+)")[0]
     if "opt_global_cv_MS:1003057_scan_number" in d.columns:
-        scan = scan.fillna(d["opt_global_cv_MS:1003057_scan_number"].replace("null", np.nan))
+        scan = scan.fillna(d["opt_global_cv_MS:1003057_scan_number"].str.extract(r"(\d+)$")[0])
     if scan.isna().any() and mgf is not None:
         idx2scan = {}
         k = 0
@@ -413,7 +413,7 @@ def evaluate(pred: pd.DataFrame, truth: pd.DataFrame, key: str | list[str] = "sc
     if "seq" not in t.columns:
         t["seq"] = t["peptide"].map(to_casanovo)
     keys = [key] if isinstance(key, str) else list(key)
-    m = t.merge(pred[keys + ["sequence", "score"]], on=keys, how="left")
+    m = t[keys + ["seq"]].merge(pred[keys + ["sequence", "score"]], on=keys, how="left")
     has = m["sequence"].notna()
     true_c = m["seq"].map(canonical)
     pred_c = m["sequence"].map(lambda s: _safe_canonical(s) if isinstance(s, str) else None)
@@ -502,6 +502,7 @@ class _ProteinIndex:
 def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
                       source_file: str, precursors: pd.DataFrame | None = None,
                       min_alc: float = 50.0, mode: str = "HCD",
+                      precursor_tol_ppm: float | None = 15.0,
                       fasta: str | Path | None = None) -> pd.DataFrame:
     """Rows in the PEAKS ``<Sample>.db.denovoOnly.csv`` layout.
 
@@ -514,6 +515,9 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
     precursor is used and Area empty / Feature Id 0.
     ALC = mean(per-residue score) * 100; local confidence = per-residue score * 100 (ints);
     rows with ALC < ``min_alc`` are dropped; sorted by ALC descending, as PEAKS does.
+    ``precursor_tol_ppm``: drop predictions whose mass is not within this tolerance of the
+    reported precursor (PEAKS's denovoOnly rows all satisfy |ppm| <= the precursor tolerance,
+    15 ppm in the reference; Casanovo itself does not enforce it). None keeps all.
     ``fasta``: optional database to fill Accession (exact I=L substring matches, ``;``-joined).
     """
     from .peaks_export import canonical_columns
@@ -551,6 +555,9 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
     z = d["charge"].astype(int)
     obs = (d["mz"].astype(float) - PROTON) * z
     ppm = (obs - mass) / mass * 1e6
+    if precursor_tol_ppm is not None:
+        keep = (ppm.abs() <= precursor_tol_ppm).to_numpy()
+        d, lc, peptide, stripped, mass, z, ppm = (x[keep] for x in (d, lc, peptide, stripped, mass, z, ppm))
     accession = ""
     if fasta is not None:
         idx = _ProteinIndex(fasta)
@@ -577,3 +584,24 @@ def denovo_only_table(denovo_df: pd.DataFrame, accepted_psm_scans: Iterable,
     })
     out = out.sort_values(["ALC (%)", "Scan"], ascending=[False, True], kind="stable")
     return out[canonical_columns("denovo_only")].reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------- training helpers
+def finetune_checkpoint(src: str | Path, dst: str | Path) -> Path:
+    """Copy a Casanovo checkpoint so ``casanovo train --model`` can fine-tune from it.
+
+    The released casanovo_orbitrap_v5-2-0.ckpt stores the DB-search hyperparameters
+    ``precursor_mass_tol`` and ``isotope_error_range``; Casanovo 5.2.1's Spec2Pep passes unknown
+    hyperparameters to ``torch.optim.Adam`` and training fails with
+    ``TypeError: Adam.__init__() got an unexpected keyword argument 'precursor_mass_tol'``.
+    This drops those keys (and the optimizer state, unused without ``--load_all_states``);
+    the weights are unchanged.
+    """
+    import torch
+    ck = torch.load(str(src), map_location="cpu", weights_only=False)
+    for k in ("precursor_mass_tol", "isotope_error_range"):
+        ck["hyper_parameters"].pop(k, None)
+    ck["optimizer_states"] = []
+    ck["lr_schedulers"] = []
+    torch.save(ck, str(dst))
+    return Path(dst)

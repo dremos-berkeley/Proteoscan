@@ -49,3 +49,18 @@ because the extra PSMs are wrong. Two-pass entrapment validation: pending.
 - features.csv export and Area columns from our own feature detector.
 - HeLa benchmark (PXD004940) runs through the pipeline and through PEAKS.
 - macOS packaging and the browser results viewer (in progress).
+
+## HeLa benchmark (PXD004940, 90-min gradients, 1% FDR, pipeline defaults; 2026-09-30)
+| run | MS2 | PSMs | peptides | protein groups | wall min |
+|---|---|---|---|---|---|
+| 03_01 500 ng | ion trap | 47,030 | 38,138 | 5,172 | 35 (single pass) |
+| 03_02 500 ng | ion trap | 46,728 | 37,764 | 5,239 | 35 (single pass) |
+| 03_03 500 ng | ion trap | 49,123 | 40,092 | 4,979 | 58 |
+| 05_01 1000 ng | ion trap | 55,767 | 44,565 | 5,149 | 63 |
+| 05_02 1000 ng | ion trap | 54,572 | 42,966 | 5,166 | 57 |
+| 05_03 1000 ng | ion trap | 55,563 | 44,108 | 5,184 | 58 |
+| 03_01 1 ug | Orbitrap 0.02 Da | 30,958 | 27,543 | 3,992 | 32 |
+| 03_02 1 ug | Orbitrap 0.02 Da | 32,111 | 28,694 | 4,029 | 26 |
+| 03_03 1 ug | Orbitrap 0.02 Da | 32,145 | 28,633 | 4,024 | 38 |
+Exports under /drive_a/drew/peaks-parity-work/hela/<run>/export. PEAKS results for these runs are
+pending on the Windows machine; they will be the training set for the score-imitation model.
