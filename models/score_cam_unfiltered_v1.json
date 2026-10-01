@@ -1,0 +1,41 @@
+{
+ "n_candidates": 1631478,
+ "n_matched": 20078,
+ "cv_matched_pearson": 0.7159,
+ "cv_matched_mae": 11.631,
+ "cv_eval": {
+  "DrewR_Adam_91526_DDA_OT_4.raw:own_fdr_threshold": {
+   "threshold": 2.63,
+   "n": 11150,
+   "n_ref": 7157,
+   "shared": 5361,
+   "recall": 0.7491,
+   "precision": 0.4808
+  },
+  "DrewR_Adam_91526_DDA_OT_4.raw:peaks_threshold": {
+   "threshold": 23.26,
+   "n": 4463,
+   "n_ref": 7157,
+   "shared": 3574,
+   "recall": 0.4994,
+   "precision": 0.8008
+  }
+ },
+ "feature_importance": {
+  "delta_next": 8231,
+  "hyperscore": 7488,
+  "log_prot_support": 7462,
+  "ms2_cos": 7309,
+  "precursor_ppm": 7265,
+  "abs_delta_rt": 6904,
+  "ms2_corr": 6275,
+  "abs_ppm": 5983,
+  "delta_rt": 5600,
+  "delta_best": 4038,
+  "len_per_mod": 3496,
+  "longest_b_obs": 2662,
+  "matched_peaks": 2600,
+  "longest_y_obs": 2224,
+  "len_per_mc": 2151
+ }
+}
