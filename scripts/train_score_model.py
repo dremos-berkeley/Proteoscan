@@ -94,6 +94,7 @@ def main():
     ap.add_argument("--candidates", nargs="+", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--cv", action="store_true")
+    ap.add_argument("--floor", type=float, default=FLOOR, help="PEAKS export score floor; unmatched candidates get floor-5")
     a = ap.parse_args()
     p = load_peaks(a.peaks_psms)
     acc = peaks_accepted(p)
@@ -118,8 +119,8 @@ def main():
         rf.FEATURE_COLUMNS.append("log_prot_support")
     matched = df["peaks_score"].notna() & ~df["is_decoy"]
     print(f"candidates {len(df)}, matched to a PEAKS-listed PSM {int(matched.sum())}, PEAKS listed targets {int((~p['decoy']).sum())}")
-    y = df["peaks_score"].fillna(FLOOR - 5.0).to_numpy()   # censored: below PEAKS's export floor
-    y = np.where(df["is_decoy"], FLOOR - 5.0, y)
+    y = df["peaks_score"].fillna(a.floor - 5.0).to_numpy()   # censored: below PEAKS's export floor
+    y = np.where(df["is_decoy"], a.floor - 5.0, y)
     report = {"n_candidates": int(len(df)), "n_matched": int(matched.sum())}
     if a.cv:
         pred = np.zeros(len(df))
