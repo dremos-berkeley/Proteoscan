@@ -54,10 +54,24 @@ def classify(seq: str, truth: set[str], truth_sub: dict[str, set[str]]) -> str:
     return "false"
 
 
-def evaluate(export_dir: Path, truth: set[str]) -> dict:
+def peaks_filter(psms: pd.DataFrame) -> pd.DataFrame:
+    """A decoy-inclusive PEAKS export lists PSMs down to -10lgP 15; apply PEAKS's own 1%
+    peptide-sequence FDR threshold (decoys / targets over best PSM per sequence)."""
+    from peaksparity.fdr import threshold_at_fdr
+    d = psms["decoy"].astype(str).str.lower().eq("true")
+    seq = psms["Peptide"].map(strip_mods).str.replace("I", "L")
+    best = pd.DataFrame({"s": psms["-10LgP"], "d": d, "seq": seq}).sort_values("s", ascending=False).drop_duplicates("seq")
+    thr = threshold_at_fdr(best["s"].to_numpy(), best["d"].to_numpy(), 0.01)
+    return psms[(psms["-10LgP"] >= thr) & ~d]
+
+
+def evaluate(export_dir: Path, truth: set[str], scan_map: pd.DataFrame | None = None) -> dict:
     psms = pd.read_csv(export_dir / "db.psms.csv")
     if "decoy" in psms:
-        psms = psms[psms["decoy"].astype(str).str.lower() != "true"]
+        psms = peaks_filter(psms)
+    if scan_map is not None and "Scan" in psms:
+        m = scan_map.set_index("scan")["type"]
+        psms["Source File"] = psms["Source File"].astype(str) + "." + psms["Scan"].map(m).fillna("unknown")
     psms["seq"] = psms["Peptide"].map(strip_mods).str.replace("I", "L")
     idx: dict[str, set[str]] = {}
     for t in truth:
@@ -84,12 +98,27 @@ def main():
     ap.add_argument("--mq-dir", default="/drive_a/drew/public-data/PXD004732/mq")
     ap.add_argument("--export", nargs="+", required=True, help="export dirs; use name=path to label")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--split-dir", help="directory of split mzMLs (<stem>.<type>.mzML) to map scans to scan types")
     a = ap.parse_args()
+    scan_map = None
+    if a.split_dir:
+        import pyopenms as oms
+        rows = []
+        for mz in Path(a.split_dir).glob("*.mzML"):
+            t = mz.stem.split(".")[-1]
+            od = oms.OnDiscMSExperiment(); od.openFile(str(mz)); meta = od.getMetaData()
+            for i in range(meta.getNrSpectra()):
+                sp = meta[i]
+                if sp.getMSLevel() == 2:
+                    mm = re.search(r"scan=(\d+)", sp.getNativeID())
+                    if mm:
+                        rows.append((int(mm.group(1)), t))
+        scan_map = pd.DataFrame(rows, columns=["scan", "type"])
     truth, source = truth_for_pool(Path(a.truth_dir), Path(a.mq_dir), a.pool)
     res = {"pool": a.pool, "truth_source": source, "truth_size": len(truth), "exports": {}}
     for e in a.export:
         name, _, path = e.partition("=") if "=" in e else (Path(e).name, "", e)
-        res["exports"][name] = evaluate(Path(path), truth)
+        res["exports"][name] = evaluate(Path(path), truth, scan_map)
     Path(a.out).write_text(json.dumps(res, indent=1))
     print(json.dumps(res, indent=1))
 
