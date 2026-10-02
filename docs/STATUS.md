@@ -89,3 +89,21 @@ Reference point: two PEAKS runs of the same file agree with each other at Pearso
 share 67-90% of accepted PSMs, depending on settings. Setting PEAKS's report filters to zero
 changes its de novo output (CAA agreement 1.00 -> 0.67) and its scores; default filters plus
 export-decoy is the right reference export.
+
+## Ground-truth accuracy: ProteomeTools synthetic pools (2026-10-02)
+24 pools of PRIDE PXD004732 (about 1,086 synthetic peptides each; truth = Supplementary Table 1 of
+Zolg et al. 2017 plus the 87 spiked QC peptides), ion-trap runs that interleave HCD-IT, CID-IT and
+HCD-OT scans of every precursor. Both methods searched the full human SwissProt database with the
+same parameters; PEAKS Studio 13.5 with DL boost on. Means per pool over 23 pools (pool 123, a sparse
+acquisition, excluded); "at 1%" = each method's own accepted list truncated at a measured 1% error.
+| scan type | method | PSMs | measured FDP | true peptides | true peptides at 1% FDP |
+|---|---|---|---|---|---|
+| HCD ion trap | ours | 8,910 | 1.14% | 815 | 707 |
+| HCD ion trap | PEAKS | 8,796 | 1.31% | 831 | 706 |
+| CID ion trap | ours | 8,535 | 1.13% | 805 | 728 |
+| CID ion trap | PEAKS | 9,056 | 1.34% | 830 | 720 |
+| HCD Orbitrap | ours | 18,863 | 0.90% | 848 | 748 |
+| HCD Orbitrap | PEAKS | 18,049 | 0.94% | 841 | 781 |
+Conclusion: parity in sensitivity and accuracy with PEAKS + DL boost on synthetic ground truth.
+Full tables: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.{md,csv}; script
+scripts/aggregate_proteometools.py.
