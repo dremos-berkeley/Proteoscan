@@ -41,6 +41,9 @@ def truth_for_pool(truth_dir: Path, mq_dir: Path, pool: str) -> tuple[set[str], 
     if pq.exists():
         t = pd.read_parquet(pq)
         s = set(t.loc[t["pool"] == pool, "sequence"].str.replace("I", "L"))
+        qc = truth_dir / "qc_peptides.parquet"
+        if qc.exists():  # retention-time / QC standards spiked into every pool
+            s |= set(pd.read_parquet(qc)["sequence"].str.replace("I", "L"))
         if s:
             return s, "supplementary_table"
     return truth_from_mq(mq_dir, pool), "maxquant_union"
