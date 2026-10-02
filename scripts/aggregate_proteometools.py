@@ -37,6 +37,16 @@ def curve(df: pd.DataFrame, truth, idx):
     return cls, false / n
 
 
+def at_measured_fdp(scores, cls, seqs, target=0.01):
+    """Largest prefix of the score-ordered accepted list whose measured FDP <= target."""
+    order = np.argsort(-np.asarray(scores), kind="stable")
+    c = np.asarray(cls)[order]; sq = np.asarray(seqs)[order]
+    false = np.cumsum(c == "false"); n = np.arange(1, len(c) + 1)
+    ok = np.where(false / n <= target)[0]
+    k = int(ok[-1] + 1) if len(ok) else 0
+    return k, int(pd.Series(sq[:k][c[:k] == "true"]).nunique())
+
+
 def true_peptides_at(df, cls, fdp, target):
     k = int(np.sum(fdp <= target))
     sub = df.iloc[:k]
@@ -72,9 +82,11 @@ def main():
             if acc is not None:  # the pipeline's actual accepted set (PEAKS-style filter)
                 acc["seq"] = acc["Peptide"].map(strip_mods).str.replace("I", "L")
                 acls = acc["seq"].map(lambda q: classify(q, truth, idx)).to_numpy()
+                k1, tp1 = at_measured_fdp(acc["-10LgP"].to_numpy(), acls, acc["seq"].to_numpy(), 0.01)
                 rows.append(dict(pool=pool, method="ours", scan_type=t, psms=len(acc), false=int((acls == "false").sum()),
                                  fdp=round(float((acls == "false").mean()) if len(acc) else 0, 4),
-                                 true_peptides=int(acc.loc[acls == "true", "seq"].nunique()), truth=len(truth), truth_source=src))
+                                 true_peptides=int(acc.loc[acls == "true", "seq"].nunique()), truth=len(truth), truth_source=src,
+                                 psms_at_1pct_measured=k1, true_peptides_at_1pct_measured=tp1))
         for mode in ("dlboost_on", "dlboost_off"):
             pdir = PEAKS / mode / pool
             if not (pdir / "db.psms.csv").exists():
@@ -91,9 +103,8 @@ def main():
                 fdp = float((cls == "false").mean())
                 row = dict(pool=pool, method=f"peaks_{mode}", scan_type=t, psms=len(g), false=int((cls == "false").sum()), fdp=round(fdp, 4),
                            true_peptides=int(g.loc[cls == "true", "seq"].nunique()), truth=len(truth), truth_source=src)
-                if t in ours:
-                    k, tp, f = true_peptides_at(ours[t]["df"], ours[t]["cls"], ours[t]["fdp"], fdp)
-                    row.update(ours_psms_at_matched_fdp=k, ours_true_peptides_at_matched_fdp=tp)
+                k1, tp1 = at_measured_fdp(g["-10LgP"].to_numpy(), cls, g["seq"].to_numpy(), 0.01)
+                row.update(psms_at_1pct_measured=k1, true_peptides_at_1pct_measured=tp1)
                 rows.append(row)
     df = pd.DataFrame(rows)
     df.to_csv(Path(a.out).with_suffix(".csv"), index=False)
@@ -105,9 +116,13 @@ def main():
         lines += [f"## {t}", "", "| method | pools | PSMs (mean) | measured FDP (mean) | true peptides (mean) | pool recall (mean) |", "|---|---|---|---|---|---|"]
         for m, g in sub.groupby("method"):
             lines.append(f"| {m} | {len(g)} | {g['psms'].mean():.0f} | {g['fdp'].mean():.4f} | {g['true_peptides'].mean():.0f} | {(g['true_peptides']/g['truth']).mean():.3f} |")
-        pk = sub[(sub["method"] == "peaks_dlboost_on") & sub["ours_true_peptides_at_matched_fdp"].notna()] if "ours_true_peptides_at_matched_fdp" in sub else pd.DataFrame()
-        if len(pk):
-            lines += ["", f"At PEAKS's measured error rate (mean {pk['fdp'].mean():.4f}): PEAKS {pk['true_peptides'].mean():.0f} true peptides, ours {pk['ours_true_peptides_at_matched_fdp'].mean():.0f} (over {len(pk)} pools; ours higher in {(pk['ours_true_peptides_at_matched_fdp'] > pk['true_peptides']).sum()})."]
+        lines += ["", "| method | pools | PSMs at measured 1% FDP (mean) | true peptides at measured 1% FDP (mean) |", "|---|---|---|---|"]
+        for m, g in sub.groupby("method"):
+            lines.append(f"| {m} | {len(g)} | {g['psms_at_1pct_measured'].mean():.0f} | {g['true_peptides_at_1pct_measured'].mean():.0f} |")
+        both = sub.pivot_table(index="pool", columns="method", values="true_peptides_at_1pct_measured")
+        if "ours" in both and "peaks_dlboost_on" in both:
+            bb = both.dropna(subset=["ours", "peaks_dlboost_on"])
+            lines.append(f"\nPaired on {len(bb)} pools at measured 1% FDP: ours higher in {(bb['ours'] > bb['peaks_dlboost_on']).sum()}, PEAKS higher in {(bb['ours'] < bb['peaks_dlboost_on']).sum()}, mean difference {(bb['ours'] - bb['peaks_dlboost_on']).mean():+.1f} peptides.")
         lines.append("")
     Path(a.out).write_text("\n".join(lines))
     print("\n".join(lines))
