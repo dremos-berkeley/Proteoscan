@@ -69,10 +69,12 @@ def main():
             acc = pd.read_csv(run / t / "export" / "db.psms.csv") if (run / t / "export" / "db.psms.csv").exists() else None
             n_acc = len(acc) if acc is not None else 0
             ours[t] = dict(df=s, cls=cls, fdp=fdp, n_acc=n_acc)
-            k = n_acc; sub = s.iloc[:k]
-            rows.append(dict(pool=pool, method="ours", scan_type=t, psms=k, false=int((cls[:k] == "false").sum()),
-                             fdp=round(float((cls[:k] == "false").mean()) if k else 0, 4),
-                             true_peptides=int(sub.loc[cls[:k] == "true", "seq"].nunique()), truth=len(truth), truth_source=src))
+            if acc is not None:  # the pipeline's actual accepted set (PEAKS-style filter)
+                acc["seq"] = acc["Peptide"].map(strip_mods).str.replace("I", "L")
+                acls = acc["seq"].map(lambda q: classify(q, truth, idx)).to_numpy()
+                rows.append(dict(pool=pool, method="ours", scan_type=t, psms=len(acc), false=int((acls == "false").sum()),
+                                 fdp=round(float((acls == "false").mean()) if len(acc) else 0, 4),
+                                 true_peptides=int(acc.loc[acls == "true", "seq"].nunique()), truth=len(truth), truth_source=src))
         for mode in ("dlboost_on", "dlboost_off"):
             pdir = PEAKS / mode / pool
             if not (pdir / "db.psms.csv").exists():
