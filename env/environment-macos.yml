@@ -1,7 +1,7 @@
-# peaks-parity on macOS, Apple Silicon (osx-arm64). Full instructions: docs/INSTALL_MACOS.md
+# proteoscan on macOS, Apple Silicon (osx-arm64). Full instructions: docs/INSTALL_MACOS.md
 #
 #   conda env create -f env/environment-macos.yml
-#   conda activate peaksparity
+#   conda activate proteoscan
 #   bash scripts/install_trfp.sh          # ThermoRawFileParser 2.0 (no native conda build, see doc)
 #   pip install --no-deps -e .
 #   python scripts/check_install.py
@@ -23,7 +23,7 @@
 # numpy >= 2) and torch 2.10 instead of 2.6 (conda-forge pytorch 2.6 cannot be co-installed
 # with pyopenms 3.5.0; DeepLC 4.5 needs torch >= 2.6). The same pins on linux-64 pass
 # scripts/check_install.py.
-name: peaksparity
+name: proteoscan
 channels:
   - conda-forge
   - bioconda
@@ -57,7 +57,7 @@ dependencies:
       - deeplc==4.5.0
       - mokapot==0.10.0
       - psm-utils==1.5.5
-# Optional extras (not needed by `peaksparity run`):
+# Optional extras (not needed by `proteoscan run`):
 #   Sage search engine:  conda install -c bioconda sage-proteomics=0.14.7   (osx-arm64 build exists)
 #   Casanovo de novo:    separate env; casanovo 5.2.1 requires numpy < 2 (docs/INSTALL_MACOS.md)
 #   Percolator:          no macOS conda build; mokapot is used instead

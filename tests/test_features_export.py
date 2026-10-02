@@ -6,9 +6,9 @@ import pandas as pd
 import pytest
 
 from conftest import require_ref
-from peaksparity.export_builder import build_peptides
-from peaksparity.features_export import PROTON, build_features_table, feature_concordance
-from peaksparity.peaks_export import canonical_columns, read_export, write_table
+from proteoscan.export_builder import build_peptides
+from proteoscan.features_export import PROTON, build_features_table, feature_concordance
+from proteoscan.peaks_export import canonical_columns, read_export, write_table
 
 SRC = "run1.raw"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Check a peaks-parity installation (macOS or Linux) and run a small end-to-end smoke test.
+"""Check a proteoscan installation (macOS or Linux) and run a small end-to-end smoke test.
 
     python scripts/check_install.py                 # checks + smoke test
     python scripts/check_install.py --skip-smoke    # tools and imports only
@@ -11,7 +11,7 @@
 3. External tools: comet, ThermoRawFileParser (plus sage, percolator, mono, dotnet if present).
    Executed, not just located, so a wrong-architecture or unsigned binary is caught here.
 4. Smoke test on synthetic data generated here (tiny FASTA + mzML written with pyopenms):
-   the real `peaksparity.pipeline.run` path, i.e. MS1 features -> precursor list ->
+   the real `proteoscan.pipeline.run` path, i.e. MS1 features -> precursor list ->
    Comet -> read_comet -> MS2PIP + DeepLC features -> mokapot -> PEAKS-style filter ->
    protein inference -> CSV export, with per-stage timings, then checks the export.
 
@@ -112,7 +112,7 @@ REQUIRED = [
     ("pyopenms", "pyopenms"), ("pyteomics", "pyteomics"), ("psm-utils", "psm_utils"),
     ("ms2pip", "ms2pip"), ("deeplc", "deeplc"), ("mokapot", "mokapot"), ("torch", "torch"),
     ("pyyaml", "yaml"), ("click", "click"), ("pyahocorasick", "ahocorasick"),
-    ("peaksparity", "peaksparity"),
+    ("proteoscan", "proteoscan"),
 ]
 OPTIONAL = [("pytest", "pytest"), ("casanovo", "casanovo"), ("peptdeep", "peptdeep"),
             ("matplotlib", "matplotlib"), ("polars", "polars")]
@@ -142,7 +142,7 @@ def check_imports() -> bool:
                 mps = getattr(getattr(mod, "backends", None), "mps", None)
                 extra = (f" cuda={mod.cuda.is_available()} mps={bool(mps and mps.is_available())} "
                          f"threads={mod.get_num_threads()}")
-            if name == "peaksparity":
+            if name == "proteoscan":
                 extra = f" ({Path(mod.__file__).parent})"
             report(OK, dist, f"{_version(dist, mod)}{extra}  [{time.time() - t:.1f}s]")
         except Exception as e:  # ImportError, OSError from a broken dylib, ...
@@ -404,7 +404,7 @@ def make_synthetic(work: Path, n_proteins: int = 80, n_planted: int = 450, n_for
 
 
 # --------------------------------------------------------------------------------------
-# 4b. smoke test through peaksparity.pipeline.run
+# 4b. smoke test through proteoscan.pipeline.run
 # --------------------------------------------------------------------------------------
 
 def _timed(stage: str, fn, timings: dict):
@@ -437,8 +437,8 @@ def smoke_test(work: Path, threads: int, processes: int, two_pass: bool = False)
     report(OK, "synthetic data", f"{mzml.name} ({mzml.stat().st_size / 1e6:.1f} MB, {n_ms2} MS2), "
            f"{fasta.name}  [{time.time() - t0:.1f}s]")
 
-    from peaksparity import pipeline, rescore_features
-    from peaksparity.config import SearchConfig
+    from proteoscan import pipeline, rescore_features
+    from proteoscan.config import SearchConfig
 
     cfg_path = REPO / "configs" / "peaks_facility_human.yml"
     cfg = SearchConfig.from_yaml(cfg_path) if cfg_path.exists() else SearchConfig()
@@ -550,7 +550,7 @@ def main(argv=None) -> int:
             report(FAIL, "smoke test", "skipped: fix the failures above first")
             ok_smoke = False
         else:
-            work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="peaksparity_check_"))
+            work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="proteoscan_check_"))
             work.mkdir(parents=True, exist_ok=True)
             try:
                 ok_smoke = smoke_test(work, a.threads, a.processes, a.two_pass)

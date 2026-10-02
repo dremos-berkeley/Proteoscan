@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from conftest import SAMPLES, require_ref
-from peaksparity import peaks_export as pe
-from peaksparity.peaks_export import (
+from proteoscan import peaks_export as pe
+from proteoscan.peaks_export import (
     TableLayout,
     canonical_columns,
     empty_table,

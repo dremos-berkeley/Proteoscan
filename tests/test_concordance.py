@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from conftest import SAMPLES, ref_dir, require_ref
-from peaksparity import concordance as cc
-from peaksparity.peaks_export import read_export, write_export
+from proteoscan import concordance as cc
+from proteoscan.peaks_export import read_export, write_export
 
 LEVELS_ALWAYS = ["psm", "scan", "peptide", "peptide_sequence", "peptide_IL_collapsed",
                  "protein_group", "protein_top_accession", "protein_accession"]

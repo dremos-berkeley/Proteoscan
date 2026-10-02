@@ -1,6 +1,6 @@
-# Results viewer (`peaksparity.ui`)
+# Results viewer (`proteoscan.ui`)
 
-`peaksparity.ui` turns a PEAKS-format DB-search export (a PEAKS Studio export or one written
+`proteoscan.ui` turns a PEAKS-format DB-search export (a PEAKS Studio export or one written
 by our pipeline) into **one self-contained HTML file**. The CSS, JavaScript, tables and peak
 lists are all inline. The page makes no network requests and uses no CDN or external
 library, so it opens straight from disk (`file://`) in Safari, Chrome or Firefox. It shows
@@ -8,12 +8,12 @@ the same result views as a DB-search result in PEAKS Studio, but with its own la
 styling.
 
 ```bash
-conda activate peaksparity
-python -m peaksparity.ui --export <export dir> \
+conda activate proteoscan
+python -m proteoscan.ui --export <export dir> \
     [--mzml run.mzML ...] [--fasta db.fasta] [--ref <PEAKS export dir>] \
     --out report.html
 # same thing through the main CLI
-python -m peaksparity.cli ui --export <export dir> ... --out report.html
+python -m proteoscan.cli ui --export <export dir> ... --out report.html
 ```
 
 | option | meaning |
@@ -32,12 +32,12 @@ Example reports (Jurkat sample 4):
 ```bash
 MZ=/drive_a/drew/openms-data/260921-DrewR_Adam_91526/mzml/DrewR_Adam_91526_DDA_OT_4.mzML
 REF="/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT/Analysis 1 - Sample 4"
-FA=/drive_a/drew/peaks-parity-work/fasta/human_sp_peaks_merged.fasta
-python -m peaksparity.ui --export "$REF" --mzml $MZ --fasta $FA \
-    --out /drive_a/drew/peaks-parity-work/ui/report_peaks_ref.html          # 12.3 MB, 3398 spectra, ~25 s
-python -m peaksparity.ui --export /drive_a/drew/peaks-parity-work/exp_peaksfeat/export_tda \
+FA=/drive_a/drew/proteoscan-work/fasta/human_sp_peaks_merged.fasta
+python -m proteoscan.ui --export "$REF" --mzml $MZ --fasta $FA \
+    --out /drive_a/drew/proteoscan-work/ui/report_peaks_ref.html          # 12.3 MB, 3398 spectra, ~25 s
+python -m proteoscan.ui --export /drive_a/drew/proteoscan-work/exp_peaksfeat/export_tda \
     --mzml $MZ --fasta $FA --ref "$REF" \
-    --out /drive_a/drew/peaks-parity-work/ui/report_pipeline.html           # 19.7 MB, 4882 spectra, ~30 s
+    --out /drive_a/drew/proteoscan-work/ui/report_pipeline.html           # 19.7 MB, 4882 spectra, ~30 s
 ```
 
 Most of the build time goes into opening the 3 GB mzML index (about 20 s). Peak memory is
@@ -65,7 +65,7 @@ about 0.7 GB.
   Table 5 when that exists.
 * PTM profile: `db.ptmProfile.csv`, or computed from the peptide tables when that file is
   missing.
-* **Concordance** (with `--ref`), built from `peaksparity.concordance.compare`:
+* **Concordance** (with `--ref`), built from `proteoscan.concordance.compare`:
   * Recall and precision at PSM, peptide and protein-group level, plus the diagnostic levels.
   * The breakdown of why PSMs differ.
   * Browsable lists of reference-only and test-only PSMs, peptides, protein groups and top
@@ -147,10 +147,10 @@ Measured with `#bench` in headless Firefox on the 15.5k-PSM pipeline report:
 
 ## Files
 
-* `peaksparity/ui.py`: data collection (tables, counts, PTM and missed-cleavage summaries,
+* `proteoscan/ui.py`: data collection (tables, counts, PTM and missed-cleavage summaries,
   sequences, spectra, concordance) and HTML assembly. The JSON sits in
   `<script type="application/json">` blocks with `<` escaped.
-* `peaksparity/ui_assets/report.js`, `report.css`: the page, inlined at build time. The
+* `proteoscan/ui_assets/report.js`, `report.css`: the page, inlined at build time. The
   script is ES2017, with no modules and no dependencies.
 * `tests/test_ui.py`: builds a synthetic export, a tiny mzML and a FASTA, then checks:
   * the embedded JSON, tables, spectra, top-N, the size cap and the concordance flags;

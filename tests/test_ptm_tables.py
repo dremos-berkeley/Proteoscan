@@ -1,4 +1,4 @@
-"""Tests for peaksparity.ptm_tables (db.ptmProfile.csv and db.modifiedPeptide.csv).
+"""Tests for proteoscan.ptm_tables (db.ptmProfile.csv and db.modifiedPeptide.csv).
 
 Reference tests feed PEAKS's own psms / peptides / proteins / protein-peptides tables back in and
 compare the written CSV text with the reference files.  See docs/PTM_TABLES.md.
@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 
 from conftest import SAMPLES, require_ref
-from peaksparity.peaks_export import read_export, write_table
-from peaksparity.ptm_tables import (
+from proteoscan.peaks_export import read_export, write_table
+from proteoscan.ptm_tables import (
     build_modified_peptides,
     build_ptm_profile,
     peaks_reference_scores,
@@ -19,10 +19,10 @@ from peaksparity.ptm_tables import (
 )
 
 FASTA = os.environ.get("PEAKSPARITY_MERGED_FASTA",
-                       "/drive_a/drew/peaks-parity-work/fasta/human_sp_peaks_merged.fasta")
+                       "/drive_a/drew/proteoscan-work/fasta/human_sp_peaks_merged.fasta")
 MZML_ROOT = os.environ.get("PEAKSPARITY_MZML_ROOT",
                            "/drive_a/drew/openms-data/260921-DrewR_Adam_91526/mzml")
-CACHE = "/drive_a/drew/peaks-parity-work/ptm_tables/cache"
+CACHE = "/drive_a/drew/proteoscan-work/ptm_tables/cache"
 
 #: RT shift cells that differ by 0.0001 because the CSV RTs carry 4 decimals and PEAKS
 #: subtracts the unrounded feature RTs (docs/PTM_TABLES.md, "RT shift").

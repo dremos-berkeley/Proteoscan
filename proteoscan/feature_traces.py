@@ -1,4 +1,4 @@
-"""Trace-based MS1 feature detection (``algorithm: traces`` in peaksparity.features).
+"""Trace-based MS1 feature detection (``algorithm: traces`` in proteoscan.features).
 
 A small, dependency-light detector written for centroided high-resolution MS1 (Orbitrap),
 built to imitate the behaviour visible in PEAKS feature exports (short features that end
@@ -18,7 +18,7 @@ where the signal disappears or at a valley; charge 1-9; monoisotopic m/z).  Step
 4. accept hypotheses greedily by score (explained intensity x fit), each elution peak used
    by at most one feature.
 
-Everything runs in numba on the flat MS1 arrays of :func:`peaksparity.features._ms1_arrays`.
+Everything runs in numba on the flat MS1 arrays of :func:`proteoscan.features._ms1_arrays`.
 """
 from __future__ import annotations
 

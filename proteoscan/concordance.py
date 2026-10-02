@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m peaksparity.concordance --ref <peaks_export_dir> --test <our_export_dir> --out <dir>
+    python -m proteoscan.concordance --ref <peaks_export_dir> --test <our_export_dir> --out <dir>
         [--features] [--feature-ppm 10] [--feature-rt 0.5] [--ignore-source-file]
         [--fixed-mod C:+57.02] [--merge-nterm] [--min-10lgp FLOAT|ref]
 
@@ -676,7 +676,7 @@ def _parse_fixed(items):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python -m peaksparity.concordance", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="python -m proteoscan.concordance", description=__doc__.split("\n")[0])
     ap.add_argument("--ref", required=True, help="reference PEAKS export directory")
     ap.add_argument("--test", required=True, help="test export directory (PEAKS format)")
     ap.add_argument("--out", required=True, help="output directory for the report")

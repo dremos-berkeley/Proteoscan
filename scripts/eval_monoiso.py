@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Evaluate peaksparity.monoiso.correct_precursor against PEAKS's featureless precursors.
+"""Evaluate proteoscan.monoiso.correct_precursor against PEAKS's featureless precursors.
 
 Usage::
 
@@ -36,8 +36,8 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from peaksparity import monoiso  # noqa: E402
-from peaksparity.monoiso import C13, PROTON, correct_precursor  # noqa: E402
+from proteoscan import monoiso  # noqa: E402
+from proteoscan.monoiso import C13, PROTON, correct_precursor  # noqa: E402
 
 KS = [-4, -3, -2, -1, 0]
 MBINS = [0, 1000, 1500, 2000, 2500, 3000, 4000, 6000, 20000]
@@ -467,7 +467,7 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--sample", type=int, default=30000, help="speed: number of entries timed")
     ap.add_argument("--save", action="store_true")
-    ap.add_argument("--module", help="evaluate correct_precursor from this .py file instead of peaksparity.monoiso")
+    ap.add_argument("--module", help="evaluate correct_precursor from this .py file instead of proteoscan.monoiso")
     a = ap.parse_args(argv)
     if a.module:
         use_module(a.module)

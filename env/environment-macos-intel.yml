@@ -1,4 +1,4 @@
-# peaks-parity on macOS, Intel (osx-64). Full instructions: docs/INSTALL_MACOS.md
+# proteoscan on macOS, Intel (osx-64). Full instructions: docs/INSTALL_MACOS.md
 #
 # Same pins as env/environment-macos.yml (Apple Silicon) except Comet:
 #   * bioconda comet-ms 2026011 / 2026.01.1 for osx-64 contains an arm64 binary (upstream's
@@ -16,12 +16,12 @@
 #   * pip resolves numba/llvmlite x86_64 wheels only up to older versions; they come from conda.
 #
 #   conda env create -f env/environment-macos-intel.yml
-#   conda activate peaksparity
+#   conda activate proteoscan
 #   (build or download Comet as above)
 #   bash scripts/install_trfp.sh
 #   pip install --no-deps -e .
 #   python scripts/check_install.py
-name: peaksparity
+name: proteoscan
 channels:
   - conda-forge
   - bioconda

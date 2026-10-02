@@ -20,7 +20,7 @@ import argparse, io, json, re, sys, zipfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pandas as pd
-from peaksparity.seqnorm import strip_mods
+from proteoscan.seqnorm import strip_mods
 
 
 def truth_from_mq(mq_dir: Path, pool: str) -> set[str]:
@@ -60,7 +60,7 @@ def classify(seq: str, truth: set[str], truth_sub: dict[str, set[str]]) -> str:
 def peaks_filter(psms: pd.DataFrame) -> pd.DataFrame:
     """A decoy-inclusive PEAKS export lists PSMs down to -10lgP 15; apply PEAKS's own 1%
     peptide-sequence FDR threshold (decoys / targets over best PSM per sequence)."""
-    from peaksparity.fdr import threshold_at_fdr
+    from proteoscan.fdr import threshold_at_fdr
     d = psms["decoy"].astype(str).str.lower().eq("true")
     seq = psms["Peptide"].map(strip_mods).str.replace("I", "L")
     best = pd.DataFrame({"s": psms["-10LgP"], "d": d, "seq": seq}).sort_values("s", ascending=False).drop_duplicates("seq")

@@ -1,4 +1,4 @@
-"""Tests for peaksparity.proteins (PEAKS protein inference imitation)."""
+"""Tests for proteoscan.proteins (PEAKS protein inference imitation)."""
 import importlib.util
 import os
 
@@ -7,8 +7,8 @@ import pandas as pd
 import pytest
 
 from conftest import REF_ROOT, REPO, SAMPLES, require_ref
-from peaksparity.peaks_export import canonical_columns, format_value, java_float_to_string
-from peaksparity.proteins import (
+from proteoscan.peaks_export import canonical_columns, format_value, java_float_to_string
+from proteoscan.proteins import (
     Enzyme,
     average_mass,
     digest_positions,

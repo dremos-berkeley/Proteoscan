@@ -1,11 +1,11 @@
-"""``casanovo`` CLI with fast result writing: ``python -m peaksparity.casanovo_fastio sequence ...``
+"""``casanovo`` CLI with fast result writing: ``python -m proteoscan.casanovo_fastio sequence ...``
 
 Casanovo 5.2.1 parses every predicted peptide with spectrum_utils' ProForma (lark) parser after
 prediction, for the run report and the mzTab ``sequence`` / ``modifications`` columns: ~3.5 ms
 per PSM, i.e. ~50 min for 165k spectra x 5 beams (as long as the GPU prediction itself). Here the
 plain sequence is obtained with a regex and the mzTab ``modifications`` column is written as
 ``null``; the ProForma column (``opt_global_cv_MS:1003169_proforma_peptidoform_sequence``),
-scores and per-residue scores, which are what peaksparity reads, are unchanged.
+scores and per-residue scores, which are what proteoscan reads, are unchanged.
 """
 import re
 import sys

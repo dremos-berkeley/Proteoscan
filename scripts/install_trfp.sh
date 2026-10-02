@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install ThermoRawFileParser 2.0.0-dev into the active conda env (or --prefix DIR).
 #
-#   conda activate peaksparity
+#   conda activate proteoscan
 #   bash scripts/install_trfp.sh              # self-contained .NET 8 build for this OS/CPU
 #   bash scripts/install_trfp.sh --route dotnet   # framework-dependent build + conda dotnet-runtime 8
 #
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
-[[ -n "$PREFIX" ]] || { echo "no conda env active; run 'conda activate peaksparity' or pass --prefix DIR" >&2; exit 1; }
+[[ -n "$PREFIX" ]] || { echo "no conda env active; run 'conda activate proteoscan' or pass --prefix DIR" >&2; exit 1; }
 
 OS="$(uname -s)"
 if [[ "$ROUTE" == "dotnet" ]]; then

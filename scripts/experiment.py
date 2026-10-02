@@ -10,15 +10,15 @@ import argparse, json, logging, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
-from peaksparity.comet_search import read_comet
-from peaksparity.config import SearchConfig
-from peaksparity.export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
-from peaksparity.peaks_export import write_export
-from peaksparity.pipeline import attach_entries, peaks_filter
-from peaksparity.proteins import infer_proteins
-from peaksparity.rescore import apply_imitation, best_per_spectrum, minus10lgp, rescore_tda, train_imitation
-from peaksparity.rescore_features import compute_features
-from peaksparity.seqnorm import canonical
+from proteoscan.comet_search import read_comet
+from proteoscan.config import SearchConfig
+from proteoscan.export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
+from proteoscan.peaks_export import write_export
+from proteoscan.pipeline import attach_entries, peaks_filter
+from proteoscan.proteins import infer_proteins
+from proteoscan.rescore import apply_imitation, best_per_spectrum, minus10lgp, rescore_tda, train_imitation
+from proteoscan.rescore_features import compute_features
+from proteoscan.seqnorm import canonical
 
 
 def export_and_compare(scored, cfg, sample, out, name, ref, fixed_count=None):
@@ -36,7 +36,7 @@ def export_and_compare(scored, cfg, sample, out, name, ref, fixed_count=None):
     prot, pp = infer_proteins(peps, cfg.database, score_threshold=cfg.protein_score_min,
                               min_unique=cfg.protein_unique_peptides_min, psms_df=psms, sample=sample)
     write_export(assemble_export(psms, peps, prot, pp, sample_name=sample, params=cfg.to_dict()), str(out / f"export_{name}"))
-    from peaksparity.concordance import main as conc
+    from proteoscan.concordance import main as conc
     import contextlib, io
     with contextlib.redirect_stdout(io.StringIO()):
         conc(["--ref", ref, "--test", str(out / f"export_{name}"), "--out", str(out / f"concordance_{name}")])
@@ -70,7 +70,7 @@ def main():
         c["proteins"] = c["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
         c["query_id"] = c["scan"]
         if a.pass2_txt:
-            from peaksparity.twopass import merge_passes
+            from proteoscan.twopass import merge_passes
             c2 = read_comet(a.pass2_txt, source_file=Path(a.mzml).name, fixed_mods=fixed)
             c2["proteins"] = c2["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
             c2["query_id"] = c2["scan"]
@@ -83,13 +83,13 @@ def main():
         feat = compute_features(c, a.mzml, ms2pip_model="HCD2021", ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=a.processes)
         feat.to_parquet(out / "features.parquet")
     if a.pass1_dir:
-        from peaksparity.twopass import add_protein_features, protein_support
+        from proteoscan.twopass import add_protein_features, protein_support
         p1 = pd.read_parquet(Path(a.pass1_dir) / "features.parquet")
         p1s = rescore_tda(p1); t1 = best_per_spectrum(p1s, "score"); t1["minus10lgp"] = minus10lgp(t1["score"], t1["is_decoy"])
         acc1, _ = peaks_filter(t1, cfg)
         support, seqs = protein_support(acc1)
         feat = add_protein_features(feat, support, seqs)
-        import peaksparity.rescore_features as rf
+        import proteoscan.rescore_features as rf
         if "log_prot_support" not in rf.FEATURE_COLUMNS:
             rf.FEATURE_COLUMNS.append("log_prot_support")
     peaks = pd.read_csv(Path(a.ref) / "db.psms.csv")

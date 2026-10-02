@@ -13,10 +13,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 import lightgbm as lgb
-from peaksparity.fdr import threshold_at_fdr
-from peaksparity.rescore import best_per_spectrum
-from peaksparity.seqnorm import canonical, strip_mods
-import peaksparity.rescore_features as rf
+from proteoscan.fdr import threshold_at_fdr
+from proteoscan.rescore import best_per_spectrum
+from proteoscan.seqnorm import canonical, strip_mods
+import proteoscan.rescore_features as rf
 
 FLOOR = 15.0
 
@@ -44,7 +44,7 @@ def peaks_accepted(p):
 
 
 def features(df):
-    from peaksparity.ion_features import ION_FEATURE_COLUMNS
+    from proteoscan.ion_features import ION_FEATURE_COLUMNS
     extra = ["log_prot_support", "from_pass2", "caa", "caa_pct", "tag_len", "max_caa_any_beam", "denovo_conf_mean", "denovo_exact"]
     cols = [c for c in rf.FEATURE_COLUMNS + extra + ION_FEATURE_COLUMNS if c in df.columns]
     cols = list(dict.fromkeys(cols))
@@ -105,7 +105,7 @@ def main():
     for c in a.candidates:
         d = pd.read_parquet(c)
         ion = Path(c).with_name("ion_features.parquet")
-        if ion.exists():  # optional extra fragment-series evidence (peaksparity.ion_features)
+        if ion.exists():  # optional extra fragment-series evidence (proteoscan.ion_features)
             f = pd.read_parquet(ion)
             if len(f) == len(d):
                 for col in f.columns:

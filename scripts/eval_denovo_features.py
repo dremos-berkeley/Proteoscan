@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 from scipy.stats import spearmanr
-from peaksparity.denovo_features import DENOVO_FEATURE_COLUMNS, denovo_features
-from peaksparity.seqnorm import canonical
+from proteoscan.denovo_features import DENOVO_FEATURE_COLUMNS, denovo_features
+from proteoscan.seqnorm import canonical
 
 COLS = ["source_file", "scan", "query_id", "peptide_sage", "charge", "is_decoy", "rank", "peptide_len"]
 

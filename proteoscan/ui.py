@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m peaksparity.ui --export <export dir> [--mzml run.mzML ...] [--fasta db.fasta]
+    python -m proteoscan.ui --export <export dir> [--mzml run.mzML ...] [--fasta db.fasta]
         [--ref <PEAKS export dir>] --out report.html
 
 Writes one HTML file with inline CSS, JavaScript and data (no network access, no external
@@ -449,7 +449,7 @@ def _counts(exp):
 
 
 def _concordance(ref, export_dir, exp):
-    """Run peaksparity.concordance.compare and derive per-row "In ref" flags for the tables."""
+    """Run proteoscan.concordance.compare and derive per-row "In ref" flags for the tables."""
     _log(f"concordance vs {ref}")
     res = concordance_compare(ref, export_dir)
     m, t = res["metrics"], res["tables"]
@@ -590,7 +590,7 @@ def collect_report_data(export_dir, mzml=(), fasta=None, ref=None, top_n=150, ma
             "export_dir": export_dir,
             "sample": exp.sample_name,
             "generated": _dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "tool": f"peaks-parity {__version__}",
+            "tool": f"proteoscan {__version__}",
             "fasta": os.path.abspath(fasta_used) if fasta_used else None,
             "mzml": mzml,
             "ref": os.path.abspath(ref) if ref else None,
@@ -627,7 +627,7 @@ def render_html(data, spectra):
     parts = [
         "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n",
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n",
-        "<meta name=\"generator\" content=\"peaks-parity ui\">\n",
+        "<meta name=\"generator\" content=\"proteoscan ui\">\n",
         f"<title>{_html_escape(title)}</title>\n<style>\n", css, "\n</style>\n</head>\n<body>\n",
         "<div id=\"app\"><noscript>This report needs JavaScript.</noscript></div>\n",
         "<script type=\"application/json\" id=\"pp-data\">", _dumps(data), "</script>\n",
@@ -661,7 +661,7 @@ def build_report(export_dir, out, mzml=(), fasta=None, ref=None, top_n=150, max_
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="python -m peaksparity.ui",
+    ap = argparse.ArgumentParser(prog="python -m proteoscan.ui",
                                  description="Write a self-contained HTML results viewer for a PEAKS-format export.")
     ap.add_argument("--export", required=True, help="export directory (PEAKS DB-search CSV layout)")
     ap.add_argument("--mzml", nargs="*", default=[], help="indexed mzML file(s) for the spectrum view")

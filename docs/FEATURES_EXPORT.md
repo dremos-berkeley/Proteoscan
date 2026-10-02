@@ -1,6 +1,6 @@
 # Feature columns and `<Sample>.db.features.csv`
 
-Code: `peaksparity/features_export.py` (`build_features_table`, `feature_concordance`),
+Code: `proteoscan/features_export.py` (`build_features_table`, `feature_concordance`),
 wired into `pipeline.run` as `stage_features_table`. Tests: `tests/test_features_export.py`.
 
 ## Data flow
@@ -65,11 +65,11 @@ Accession) for when we do.
 ## Jurkat (sample 4) concordance
 
 Run: the cached `pipeline_jurkat` intermediates, re-run through rescoring and export into
-`/drive_a/drew/peaks-parity-work/pipeline_jurkat_features/`. Mokapot rescoring is not
+`/drive_a/drew/proteoscan-work/pipeline_jurkat_features/`. Mokapot rescoring is not
 bit-reproducible, so this run has 15,427 PSM rows against 15,398 in the earlier run. Numbers
 are in `feature_concordance.json` and `concordance_features/`.
 
-Matching follows `peaksparity.concordance --features`: same z, m/z within 10 ppm, RT within
+Matching follows `proteoscan.concordance --features`: same z, m/z within 10 ppm, RT within
 0.5 min, one-to-one greedy.
 
 | comparison | n PEAKS | n ours | matched | recall | precision |

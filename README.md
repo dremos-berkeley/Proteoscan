@@ -1,8 +1,14 @@
-# peaks-parity
+# Proteoscan
 
-Open-source (MIT) DDA proteomics identification pipeline built to reproduce PEAKS Studio's
-exports (PSMs, peptides, protein groups, features, de novo-only spectra, PTM profile) from
-Thermo raw files, on macOS and Linux.
+Open-source (MIT) DDA proteomics identification pipeline for Thermo Orbitrap data, on macOS and
+Linux. It writes PEAKS Studio-compatible exports (PSMs, peptides, protein groups, features,
+de novo-only spectra, PTM profile) and, on synthetic-peptide ground truth, matches PEAKS Studio 13.5
+with its Deep Learning Boost in sensitivity and accuracy (docs/STATUS.md).
+
+Pipeline: ThermoRawFileParser -> MS1 feature detection and PEAKS-style precursor list -> Comet ->
+protein-restricted second pass -> rescoring with MS2PIP fragment-intensity, DeepLC retention-time,
+de novo agreement (fine-tuned Casanovo) and ion-series features -> PEAKS-style FDR filter -> protein
+inference -> exports and a self-contained HTML results viewer.
 
 Status: under construction. See `docs/ARCHITECTURE.md` for the stage design and
 `docs/PEAKS_EXPORT_FORMAT.md` for the export format we reproduce.
@@ -12,8 +18,8 @@ install with `python scripts/check_install.py`.
 
 ```bash
 conda env create -f env/environment.yml
-conda activate peaksparity
-python -m peaksparity.cli convert data/*.raw --out work/mzml
-python -m peaksparity.cli search work/mzml/*.mzML --config configs/peaks_facility_human.yml --out work/search
-python -m peaksparity.cli concordance --ref <peaks export dir> --test <our export dir> --out work/concordance
+conda activate proteoscan
+python -m proteoscan.cli convert data/*.raw --out work/mzml
+python -m proteoscan.cli search work/mzml/*.mzML --config configs/peaks_facility_human.yml --out work/search
+python -m proteoscan.cli concordance --ref <peaks export dir> --test <our export dir> --out work/concordance
 ```

@@ -3,7 +3,7 @@
 
 For each reference sample, feed db.peptides.csv (+ db.psms.csv for #Spec and features,
 + <sample>.db.features.csv for unrounded feature areas, + full-precision PSM scores from
-db.mzidentml_1_2_0.xml) into ``peaksparity.proteins.infer_proteins`` and compare with
+db.mzidentml_1_2_0.xml) into ``proteoscan.proteins.infer_proteins`` and compare with
 db.proteins.csv and db.protein-peptides.csv.
 
 Usage::
@@ -12,7 +12,7 @@ Usage::
         [--mapping fasta|accession|both] [--no-mzid] [--out DIR]
 
 Every comparison is an exact string match of the values as PEAKS would print them
-(``peaksparity.peaks_export.format_value``), except "-10LgP (2 dp)" which compares the
+(``proteoscan.peaks_export.format_value``), except "-10LgP (2 dp)" which compares the
 protein score rounded to 2 decimals.
 """
 from __future__ import annotations
@@ -27,20 +27,20 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from peaksparity.peaks_export import format_value, read_export  # noqa: E402
-from peaksparity.proteins import infer_proteins, read_mzid_psm_scores, read_protein_db  # noqa: E402
+from proteoscan.peaks_export import format_value, read_export  # noqa: E402
+from proteoscan.proteins import infer_proteins, read_mzid_psm_scores, read_protein_db  # noqa: E402
 
 REF = "/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT"
-FASTA = "/drive_a/drew/peaks-parity-work/proteins/human_sp_peaks_merged.fasta"
+FASTA = "/drive_a/drew/proteoscan-work/proteins/human_sp_peaks_merged.fasta"
 LOCAL_FASTA = "/drive_a/drew/openms-data/260921-DrewR_Adam_91526/fasta/human_sp.fasta"
-OUT = "/drive_a/drew/peaks-parity-work/proteins/eval"
+OUT = "/drive_a/drew/proteoscan-work/proteins/eval"
 
 
 def build_merged_fasta(ref_root, local_fasta, out_path):
     """Local SwissProt FASTA with entries replaced/added from PEAKS's own db.proteins.fasta
     files (PEAKS's DB is an older UniProt release: renamed entries such as GRP75 -> HSPA9,
     changed descriptions/genes, 8 changed sequences, 2 entries missing locally)."""
-    from peaksparity.proteins import _read_fasta
+    from proteoscan.proteins import _read_fasta
 
     peaks = {}
     for d in sorted(os.listdir(ref_root)):

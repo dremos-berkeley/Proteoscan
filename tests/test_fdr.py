@@ -1,4 +1,4 @@
-"""Tests for peaksparity.fdr (PEAKS-style target/decoy thresholds)."""
+"""Tests for proteoscan.fdr (PEAKS-style target/decoy thresholds)."""
 import math
 
 import numpy as np
@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from conftest import SAMPLES, require_ref
-from peaksparity.fdr import (
+from proteoscan.fdr import (
     fdr_curve,
     peptide_fdr,
     protein_group_fdr,
@@ -92,7 +92,7 @@ def test_reference_counting_units(k):
     """db.summary.html counts: #PSMs = distinct (Scan, Feature Id) pairs of db.psms.csv;
     #Sequences = distinct I/L-collapsed stripped sequences of db.peptides.csv."""
     d = require_ref(k)
-    from peaksparity.peaks_export import read_export
+    from proteoscan.peaks_export import read_export
 
     exp = read_export(d, tables=["psms", "peptides"], verify=False)
     stats = exp.params["statistics"]["Total"]

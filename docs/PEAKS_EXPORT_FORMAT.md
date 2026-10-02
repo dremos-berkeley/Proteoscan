@@ -4,7 +4,7 @@ Reverse-documented from the four reference exports in
 `/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT/Analysis 1 - Sample {1..4}/`
 (PEAKS Studio, DB search with Deep Learning Boost, human Swiss-Prot 20,597 entries,
 semi-specific trypsin, CAM fixed, Deamidation (NQ) and Oxidation (M) variable).
-Everything below was checked against those files. `peaksparity.peaks_export` reads and writes
+Everything below was checked against those files. `proteoscan.peaks_export` reads and writes
 this format, and a test confirms that read then write reproduces all 32 CSVs byte for byte.
 
 ## General encoding

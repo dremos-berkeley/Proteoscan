@@ -1,4 +1,4 @@
-# Installing peaks-parity on macOS
+# Installing proteoscan on macOS
 
 Tested state (2026-09-30): the recipe below was assembled on Linux and has **not yet been run
 on a Mac**. What was checked, and how, is listed in [What was verified](#what-was-verified).
@@ -44,10 +44,10 @@ into a conda that was itself installed as x86_64 on an Apple Silicon Mac.
 ## 2. Create the environment
 
 ```bash
-git clone <peaks-parity repository URL> peaks-parity
-cd peaks-parity
+git clone <proteoscan repository URL> proteoscan
+cd proteoscan
 conda env create -f env/environment-macos.yml          # Intel: env/environment-macos-intel.yml
-conda activate peaksparity
+conda activate proteoscan
 ```
 
 This takes 3-10 minutes (about 220 conda packages plus five pure-Python pip packages). All
@@ -105,15 +105,15 @@ mono, and conda-forge builds mono only for osx-64. Alternatives if the script fa
 |---|---|
 | framework-dependent build + conda .NET | `conda install -c conda-forge dotnet-runtime=8.0` then `bash scripts/install_trfp.sh --route dotnet --force` |
 | Homebrew mono + 1.4.5 | `brew install mono`; unzip `ThermoRawFileParser1.4.5.zip` from the GitHub release; wrapper `exec mono /path/ThermoRawFileParser.exe "$@"` |
-| Rosetta env (Apple Silicon) | `CONDA_SUBDIR=osx-64 conda create -n trfp -c conda-forge -c bioconda thermorawfileparser=1.4.5`; put that env's `bin` on PATH after `peaksparity` |
+| Rosetta env (Apple Silicon) | `CONDA_SUBDIR=osx-64 conda create -n trfp -c conda-forge -c bioconda thermorawfileparser=1.4.5`; put that env's `bin` on PATH after `proteoscan` |
 
 Or convert on Linux/Windows and copy the mzML files over: the pipeline accepts mzML directly.
 
-## 4. Install peaks-parity itself
+## 4. Install proteoscan itself
 
 ```bash
 pip install --no-deps -e .     # editable: the pipeline reads configs/ from the checkout
-peaksparity -h                 # convert, search, concordance, run, ui
+proteoscan -h                 # convert, search, concordance, run, ui
 ```
 
 `--no-deps` keeps pip from touching the conda packages (plain `pip install -e .` also works in
@@ -166,15 +166,15 @@ Edit the FASTA path in the config (the committed one points at the Linux server)
 ```bash
 cp configs/peaks_facility_human.yml my_search.yml
 # edit my_search.yml:  database: /Users/<you>/fasta/human_sp.fasta   threads: 8
-peaksparity run --config my_search.yml --input /path/run.raw --out work/run1 --processes 8
+proteoscan run --config my_search.yml --input /path/run.raw --out work/run1 --processes 8
 # lower-memory variant: no MS1 feature detection, one monoisotope-corrected precursor per MS2
-peaksparity run --config my_search.yml --input /path/run.raw --out work/run1 --features none
+proteoscan run --config my_search.yml --input /path/run.raw --out work/run1 --features none
 ```
 
 `--input` also takes mzML. `--processes` sets the MS2PIP threads; `threads:` in the config sets
 Comet's. The run includes the two-pass search (second Comet pass on the proteins accepted in
 pass 1; `--single-pass` skips it). Every stage caches its output in `--out`, so an interrupted run resumes. Results: `work/run1/export/db.*.csv` (PEAKS layout) and `work/run1/run_stats.json`.
-HTML viewer: `peaksparity ui --export work/run1/export --mzml work/run1/mzml/run.mzML --out report.html`.
+HTML viewer: `proteoscan ui --export work/run1/export --mzml work/run1/mzml/run.mzML --out report.html`.
 
 ## Run time and memory for a 3 GB raw file
 
@@ -199,17 +199,17 @@ roughly 1.5-2x faster single-threaded than this Xeon; Comet scales with cores).
 The memory figures quoted before this measurement ("about 3 GB for the search, up to 27 GB for
 MS1 feature detection") need two corrections for the current code:
 
-- Comet itself does stay near 3 GB, but `peaksparity run` is one Python process whose peak is
+- Comet itself does stay near 3 GB, but `proteoscan run` is one Python process whose peak is
   set by `stage_precursors` (10.7 GB with MS1 features, 6.7 GB with `--features none`, both
   dominated by holding the whole mzML plus the whole expanded mzML in memory) and by the
   MS2PIP feature stage (see table).
 - `detect_features` with the committed `configs/features_lumos_120k.yml` peaks at **2.7 GB**
   on this file, not 27 GB; with `boundary: walk` it peaks at 9.3 GB (the re-extraction over
-  +/-1 min windows). The 27 GB in `peaks-parity-work/features/REPORT.md` was measured through
+  +/-1 min windows). The 27 GB in `proteoscan-work/features/REPORT.md` was measured through
   the evaluation harness, which holds PEAKS's features and extra lookups as well.
 
 Whole run on the server: about 80-90 min of compute for this file (conversion 13, precursors
-15, Comet 17, features 23, mokapot 2, plus the second pass). Peak memory of `peaksparity run`
+15, Comet 17, features 23, mokapot 2, plus the second pass). Peak memory of `proteoscan run`
 is the MS2PIP stage, 34 GB, not feature detection.
 
 Practical guidance until the MS2PIP stage is batched: 64 GB Macs run the default
@@ -222,7 +222,7 @@ MS2PIP memory scales with the number of candidates, i.e. with queries x `--candi
 
 ## Memory: bounding each stage (proposal)
 
-This is a proposal; none of it is implemented. Target: every stage of `peaksparity run`
+This is a proposal; none of it is implemented. Target: every stage of `proteoscan run`
 under about 8 GB on a 3-4 GB raw file, so a 16 GB Mac runs the default configuration.
 
 ### Where the memory goes now (S4, measured above)
@@ -280,7 +280,7 @@ A smaller, exact first step: run `_reextract` over batches of features sorted by
 batch limited to ~5 M (feature, scan) rows (about 1.3 GB), and concatenate. This alone takes
 the walk configuration from 9.3 GB to about 3 GB and needs no seam logic.
 
-### The two larger levers for `peaksparity run`
+### The two larger levers for `proteoscan run`
 
 - **Stream the expanded mzML.** `write_expanded_mzml` should write each expanded spectrum
   through `pyopenms.PlainMSDataWritingConsumer` as it is created instead of collecting an
@@ -307,19 +307,19 @@ the walk configuration from 9.3 GB to about 3 GB and needs no seam logic.
 | `Library not loaded: @rpath/libomp.dylib` (lightgbm/xgboost) | pip wheel of lightgbm/xgboost; reinstall from conda-forge as above (or `brew install libomp` if you insist on pip) |
 | `conda env create` fails to solve | use `mamba`/`conda` >= 23.10 (libmamba solver), keep `channels: conda-forge, bioconda` in that order, `conda config --set channel_priority strict`; do not add `defaults` |
 | `conda info` says `osx-64` on Apple Silicon | Terminal or conda runs under Rosetta; reinstall Miniforge from a native Terminal (`uname -m` = `arm64`) |
-| `UserWarning: OPENMS_DATA_PATH environment variable not found` | Python run without `conda activate peaksparity`; activate the env |
+| `UserWarning: OPENMS_DATA_PATH environment variable not found` | Python run without `conda activate proteoscan`; activate the env |
 | MS2PIP download fails (firewall, offline Mac) | copy `~/.ms2pip/model_20210416_HCD2021_{B,Y}.xgboost` from a machine that has them |
 | `RuntimeError: Failed to calibrate scores ... no target PSMs could be found below 'test_fdr'` (mokapot) | too few confident PSMs (tiny or failed run); check `comet` output and the FASTA path |
 | `comet.params keys not found for this Comet version` | a different Comet release is first on PATH: `which -a comet`; use 2026.01.1 (or 2025.03.0 on Intel) |
 | process killed / system swaps during a run | lower `--processes` and `threads:`; use `--features none`; see the memory section |
-| `ModuleNotFoundError: peaksparity` | `pip install --no-deps -e .` from the repository root, inside the activated env |
+| `ModuleNotFoundError: proteoscan` | `pip install --no-deps -e .` from the repository root, inside the activated env |
 
 ## Optional extras
 
 - **Sage**: `conda install -c bioconda sage-proteomics=0.14.7` (osx-arm64 and osx-64 builds
-  exist). Not used by `peaksparity run`; note that Sage needs 300-500 GB RAM for the
+  exist). Not used by `proteoscan run`; note that Sage needs 300-500 GB RAM for the
   semi-tryptic human search, so it is not practical on a Mac anyway.
-- **Casanovo** (de novo, not used by `peaksparity run` yet): it requires numpy < 2, which
+- **Casanovo** (de novo, not used by `proteoscan run` yet): it requires numpy < 2, which
   conflicts with pyopenms 3.5.0 from bioconda on macOS. Use a separate env:
   `conda create -n casanovo -c conda-forge python=3.11 pytorch=2.10 "numpy<2" && conda activate casanovo && pip install casanovo==5.2.1`.
   (Not solved or tested on macOS.)
@@ -378,7 +378,7 @@ Verified:
   1.5 min) installed nothing extra with pip (conda's pytorch satisfies DeepLC's `torch>=2.6`),
   passes `scripts/check_install.py` (450/450 planted peptides, 17-30 s) with multiprocessing
   forced to `spawn` (the macOS default), passes the full test suite (149 passed, numpy 2.3.5),
-  and `pip install -e .` in it installs only peaksparity.
+  and `pip install -e .` in it installs only proteoscan.
 - **Binaries, by inspecting the Mach-O headers** (architecture, code signature, minimum OS):
   bioconda comet-ms 2026011 osx-arm64 = arm64, signed, macOS >= 14.0; the osx-64 package and
   upstream `comet.macos.exe` (v2026.01.0 onward) = arm64 too; v2025.03.0 `comet.macos.exe` =

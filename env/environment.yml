@@ -1,4 +1,4 @@
-name: peaksparity
+name: proteoscan
 channels:
   - conda-forge
   - bioconda

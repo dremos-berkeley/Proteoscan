@@ -6,11 +6,11 @@ our imitation: Casanovo calls for every (scan, precursor) query of a run, per-ca
 agreement features, their validation against the PEAKS propionamide rerun export, and their
 effect on the score-imitation model (scripts/train_score_model.py).
 
-Code: `peaksparity/denovo_features.py` (features + sharded Casanovo runner),
+Code: `proteoscan/denovo_features.py` (features + sharded Casanovo runner),
 `scripts/add_denovo_features.py` (join onto a candidate table),
 `scripts/eval_denovo_features.py` (validation against a PEAKS export),
 `tests/test_denovo_features.py`.
-Working data: `/drive_a/drew/peaks-parity-work/denovo_features/`.
+Working data: `/drive_a/drew/proteoscan-work/denovo_features/`.
 
 ## Features
 
@@ -35,7 +35,7 @@ parse the unique peptides, under 1 s for the numba kernel (16 threads).
 API:
 
 ```python
-from peaksparity.denovo_features import run_denovo_queries, add_denovo_features
+from proteoscan.denovo_features import run_denovo_queries, add_denovo_features
 # queries: DataFrame(id=query_id, mz, charge) of the pipeline's precursors.parquet;
 # the expanded mzML has one spectrum per query, native id scan=<query_id>
 dn = run_denovo_queries(expanded_mzml, queries, ckpt, out_dir, stem, n_shards=2, gpus=("2", "3"),
@@ -45,7 +45,7 @@ cands = add_denovo_features(cands, dn.rename(columns={"id": "query_id"}))
 
 ## De novo runs (Casanovo ft5runs, beam 5, top 5, precursor-consistent pick)
 
-Model `/drive_a/drew/peaks-parity-work/denovo_finetune/models/casanovo_iontrap_hcd_ft5runs_step15000.ckpt`
+Model `/drive_a/drew/proteoscan-work/denovo_finetune/models/casanovo_iontrap_hcd_ft5runs_step15000.ckpt`
 (copy: `models/casanovo_iontrap_hcd_ft5runs_step15000.ckpt`), `n_beams 5`, `top_match 5`,
 `max_peptide_len 50`, `max_charge 4` (Casanovo skips higher charges), fp16 autocast
 (`precision: 16-mixed`), batch 512. Input: the pipeline's expanded mzML (one spectrum per
@@ -69,12 +69,12 @@ Throughput is about 45 spectra/s per A6000 at beam 5 (fp16); the GPU is the bott
 - batch 2048: no faster.
 
 Casanovo 5.2.1 parses every output PSM with spectrum_utils' ProForma parser after prediction,
-at ~3.5 ms per PSM, which is ~50 min for 825k beam rows. `peaksparity/casanovo_fastio.py`
-(`python -m peaksparity.casanovo_fastio sequence ...`, used by default by
+at ~3.5 ms per PSM, which is ~50 min for 825k beam rows. `proteoscan/casanovo_fastio.py`
+(`python -m proteoscan.casanovo_fastio sequence ...`, used by default by
 `run_denovo_queries`) replaces that with a regex. Predictions and scores are byte-identical, and
 the mzTab `modifications` column becomes `null`.
 
-Outputs (`/drive_a/drew/peaks-parity-work/denovo_features/runs/`):
+Outputs (`/drive_a/drew/proteoscan-work/denovo_features/runs/`):
 - `<run>.cand.denovo_all.parquet`: every beam candidate for the queries that have database
   candidates. Columns: query_id, scan (raw), precursor_idx, rank, sequence (ProForma), peptide
   (PEAKS notation), score, per_residue_scores, charge, exp_mz, ppm, precursor_ok, picked, shard.
@@ -88,7 +88,7 @@ OT_4 in total: 428,716 of the 429,200 z <= 4 queries (192,090 raw scans) have a 
 run).
 
 Candidate tables with the features, next to the originals:
-`/drive_a/drew/peaks-parity-work/prop/<run>/candidates_features_2pass_denovo.parquet`
+`/drive_a/drew/proteoscan-work/prop/<run>/candidates_features_2pass_denovo.parquet`
 (`scripts/add_denovo_features.py`; OT_4 1.6 M candidates: 71 s wall, 11 GB RAM). The query
 coverage is 99.4-99.9 %.
 
@@ -151,7 +151,7 @@ The training script already lists `caa, caa_pct, tag_len, max_caa_any_beam, deno
 denovo_exact` among its optional features. It also loads `ion_features.parquet` from the
 candidate file's directory when present (neutral-loss / 2+ fragment features, added in
 parallel). The official v2 therefore contains base + ion + de novo features. Two ablations
-separate the contributions; their pkl/json are in `/drive_a/drew/peaks-parity-work/denovo_features/models/`.
+separate the contributions; their pkl/json are in `/drive_a/drew/proteoscan-work/denovo_features/models/`.
 Absent feature columns are now filled with 0 when a model is applied (`predict` in the script,
 `rescore.apply_imitation` with a warning), so a v2 model still scores runs without de novo.
 
@@ -186,5 +186,5 @@ novo would give.
   rows). Mass-constrained decoding would make the calls, and the CAA, more PEAKS-like.
 - A PEAKS-like local confidence (agreement across many candidates) and an ALC >= 50 presence
   flag could narrow the gap to the PEAKS-de novo ceiling.
-- The pipeline (`peaksparity.pipeline`) does not yet run de novo. Integrating
+- The pipeline (`proteoscan.pipeline`) does not yet run de novo. Integrating
   `run_denovo_queries` + `add_denovo_features` before rescoring costs ~45 spectra/s per GPU.

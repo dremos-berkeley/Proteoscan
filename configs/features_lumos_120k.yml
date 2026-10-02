@@ -1,7 +1,7 @@
 # MS1 feature detection for Lumos / Orbitrap Fusion, 120k Orbitrap MS1 centroided by
 # ThermoRawFileParser.  Chosen on DrewR_Adam_91526 Samples 4 and 1 against PEAKS features.csv
-# (see /drive_a/drew/peaks-parity-work/features/REPORT.md).  Keys are detect_features() kwargs.
-algorithm: traces            # peaksparity.feature_traces (beat FFC, FeatureFindingMetabo, Multiplex)
+# (see /drive_a/drew/proteoscan-work/features/REPORT.md).  Keys are detect_features() kwargs.
+algorithm: traces            # proteoscan.feature_traces (beat FFC, FeatureFindingMetabo, Multiplex)
 threads: 16
 openms:                      # detector parameters (feature_traces.DEFAULTS for the rest)
   trace_ppm: 6.0             # centroid linking tolerance between consecutive MS1 scans

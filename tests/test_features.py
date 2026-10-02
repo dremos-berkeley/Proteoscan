@@ -1,12 +1,12 @@
-"""Synthetic tests for peaksparity.features / feature_traces (no reference data needed)."""
+"""Synthetic tests for proteoscan.features / feature_traces (no reference data needed)."""
 import numpy as np
 import pandas as pd
 import pytest
 
 pytest.importorskip("numba")
 
-from peaksparity.feature_traces import run_traces  # noqa: E402
-from peaksparity.features import C13_DELTA, _reextract, assign_ms2_to_features  # noqa: E402
+from proteoscan.feature_traces import run_traces  # noqa: E402
+from proteoscan.features import C13_DELTA, _reextract, assign_ms2_to_features  # noqa: E402
 
 
 def _synthetic_ms1(peptides, n_scans=200, dt_min=0.01, noise=50, seed=0):

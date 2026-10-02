@@ -7,7 +7,7 @@ Writes <out>/config.yaml (Casanovo defaults + the overrides below), runs
 --hours; <out>/ft.best.ckpt is the selected model.
 
 Example:
-  python scripts/denovo_finetune.py --out /drive_a/drew/peaks-parity-work/denovo_finetune/runs/ft1 \
+  python scripts/denovo_finetune.py --out /drive_a/drew/proteoscan-work/denovo_finetune/runs/ft1 \
       --model ~/.cache/casanovo/casanovo_orbitrap_v5-2-0.ckpt \
       --train '/drive_a/.../mgf/train.*.mgf' --valid /drive_a/.../mgf/valid.*.mgf --gpu 2 --hours 4
 """
@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from peaksparity import denovo  # noqa: E402
+from proteoscan import denovo  # noqa: E402
 
 
 def main():

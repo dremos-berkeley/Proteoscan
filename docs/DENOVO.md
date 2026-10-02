@@ -1,6 +1,6 @@
 # De novo sequencing for ion-trap HCD spectra (Casanovo fine-tuning)
 
-Stage 3 (`peaksparity/denovo.py`). PEAKS's de novo result feeds its `denovoOnly` export and the
+Stage 3 (`proteoscan/denovo.py`). PEAKS's de novo result feeds its `denovoOnly` export and the
 Tag Length / CAA (%) columns of the DB tables (docs/PEAKS_ALGORITHMS.md section 1). Our open
 substitute is Casanovo 5.2.1. Its released model (`casanovo_orbitrap_v5-2-0.ckpt`) was trained on
 Orbitrap MS2 and does poorly on the low-resolution ion-trap (ITMS) HCD spectra of the Jurkat
@@ -10,9 +10,9 @@ from its exported CSVs.
 
 Scripts: `scripts/denovo_make_mgf.py` (training/test MGFs), `scripts/denovo_finetune.py`
 (training under a wall-clock budget), `scripts/denovo_eval.py` (evaluation). Working data:
-`/drive_a/drew/peaks-parity-work/denovo_finetune/`.
+`/drive_a/drew/proteoscan-work/denovo_finetune/`.
 
-## API (`peaksparity/denovo.py`)
+## API (`proteoscan/denovo.py`)
 
 | function | purpose |
 |---|---|
@@ -106,7 +106,7 @@ With 3 training runs the validation loss is lowest after 6 epochs (6,000 steps) 
 ~115k training spectra. Two more runs (197k spectra) delay this. The model selected by
 validation loss (never by the test set) is ft5runs, step 15,000:
 
-`/drive_a/drew/peaks-parity-work/denovo_finetune/models/casanovo_iontrap_hcd_ft5runs_step15000.ckpt`
+`/drive_a/drew/proteoscan-work/denovo_finetune/models/casanovo_iontrap_hcd_ft5runs_step15000.ckpt`
 
 (also kept: `casanovo_iontrap_hcd_ft3runs_step6000.ckpt`, the best 3-run model).
 The start checkpoint is `.../denovo_finetune/casanovo_orbitrap_v5-2-0.finetune_start.ckpt`.
@@ -144,7 +144,7 @@ Accuracy (I=L) at a score threshold keeping the top x % of spectra:
 | ft5runs, beam 5 + precursor | 85.8 % | 57.9 % | 37.9 % | 27.1 % | 20.4 % |
 | ft3runs step 6000, beam 5 + precursor | 88.3 % | 62.1 % | 41.1 % | 30.0 % | 22.5 % |
 
-Plot: `/drive_a/drew/peaks-parity-work/denovo_finetune/eval/accuracy_vs_score_jurkat.png`;
+Plot: `/drive_a/drew/proteoscan-work/denovo_finetune/eval/accuracy_vs_score_jurkat.png`;
 curves: `eval/<model>.peaks[.b5t5].curve.tsv`.
 
 Sequencing the whole mzML with its own precursor records (189k MS2 spectra; evaluated on the
@@ -216,8 +216,8 @@ these spectra, and PEAKS's ALC is a useful confidence for both.
 ## denovoOnly export from our model
 
 ```python
-from peaksparity import denovo
-from peaksparity.peaks_export import write_table
+from proteoscan import denovo
+from proteoscan.peaks_export import write_table
 # prec: one row per precursor (chimeric scans may have several): scan, charge, mz, rt_min, area, feature_id
 pred = denovo.sequence_mzml(mzml, ckpt, "out/run.denovo.mztab", precursors=prec, n_beams=5, top_match=5)
 # accepted: (scan, feature_id) pairs (or plain scans) with an accepted DB PSM

@@ -4,7 +4,7 @@
 Input is a table of identified peptides in the PEAKS ``db.peptides.csv`` layout (one row per
 peptidoform, best PSM) and the protein FASTA.  Output is a pair of DataFrames with exactly
 the columns of PEAKS ``db.proteins.csv`` and ``db.protein-peptides.csv``
-(:func:`peaksparity.peaks_export.canonical_columns`).
+(:func:`proteoscan.peaks_export.canonical_columns`).
 
 Every rule below was established on the four DrewR_Adam_91526 reference exports; see
 docs/PROTEIN_INFERENCE.md for the evidence.  Summary:
@@ -207,7 +207,7 @@ class Enzyme:
 
     @classmethod
     def from_params(cls, params):
-        """From :func:`peaksparity.peaks_export.parse_summary_html` output."""
+        """From :func:`proteoscan.peaks_export.parse_summary_html` output."""
         params = params or {}
         enz = str(params.get("enzyme", "Trypsin")).lower()
         mode = str(params.get("digest_mode", "Semi-Specific")).lower()
@@ -525,7 +525,7 @@ def _f32_sum(values):
 def _half_up_sci(x):
     """PEAKS prints the protein Area with 3 significant digits rounding HALF_UP (one exact
     tie in the references: ERF3A 1065000.0f -> "1.07E6"), whereas
-    :func:`peaksparity.peaks_export.format_value` rounds HALF_EVEN.  For an exact tie
+    :func:`proteoscan.peaks_export.format_value` rounds HALF_EVEN.  For an exact tie
     return the next double up so that either formatter prints the PEAKS value."""
     if x != x or x == 0:
         return x

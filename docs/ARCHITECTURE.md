@@ -1,4 +1,4 @@
-# peaks-parity architecture
+# proteoscan architecture
 
 Goal: an open-source (MIT) DDA identification pipeline that runs on macOS and Linux and
 reproduces PEAKS Studio's exports (PSMs, peptides, protein groups, features, de novo-only
@@ -37,7 +37,7 @@ inspect the PEAKS binary.
                (peptide -10lgP threshold at 1% peptide FDR; protein -10lgP >= 15 and
                >= 1 unique peptide).
 7. `proteins`  Protein score, grouping and "Top" flag following PEAKS rules.
-8. `export`    Write the PEAKS CSV set with identical columns (`peaksparity.peaks_export`).
+8. `export`    Write the PEAKS CSV set with identical columns (`proteoscan.peaks_export`).
 9. `concord`   Compare any export directory to a PEAKS reference; the optimization loop
                maximizes PSM recall/precision at exact modified-sequence level.
 10. `ui`       Browser-based results viewer (later).

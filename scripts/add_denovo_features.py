@@ -1,4 +1,4 @@
-"""Append de novo agreement features (peaksparity.denovo_features) to a candidate table.
+"""Append de novo agreement features (proteoscan.denovo_features) to a candidate table.
 
     python scripts/add_denovo_features.py --candidates <run>/candidates_features_2pass.parquet \
         --denovo <run>.cand.denovo_all.parquet [<run>.rest.denovo_all.parquet ...] \
@@ -12,7 +12,7 @@ import argparse, logging, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pandas as pd
-from peaksparity.denovo_features import DENOVO_FEATURE_COLUMNS, add_denovo_features
+from proteoscan.denovo_features import DENOVO_FEATURE_COLUMNS, add_denovo_features
 
 
 def main():

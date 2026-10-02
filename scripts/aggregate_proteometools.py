@@ -1,16 +1,16 @@
 """Aggregate the ProteomeTools ground-truth benchmark over all pools: our pipeline per scan type
 versus PEAKS (DL boost on/off) at each method's own 1% FDR and at matched measured error.
 
-    python scripts/aggregate_proteometools.py --out /drive_a/drew/peaks-parity-work/proteometools/SUMMARY.md
+    python scripts/aggregate_proteometools.py --out /drive_a/drew/proteoscan-work/proteometools/SUMMARY.md
 """
 import argparse, glob, json, re, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
 from scripts.benchmark_proteometools import truth_for_pool, classify, peaks_filter
-from peaksparity.seqnorm import strip_mods
+from proteoscan.seqnorm import strip_mods
 
-W = Path("/drive_a/drew/peaks-parity-work/proteometools")
+W = Path("/drive_a/drew/proteoscan-work/proteometools")
 D = Path("/drive_a/drew/public-data/PXD004732")
 PEAKS = Path("/drive_a/drew/vendor-exports/PXD004732_peaks")
 TYPES = ("hcd_it", "cid_it", "hcd_ft")

@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from peaksparity import denovo  # noqa: E402
+from proteoscan import denovo  # noqa: E402
 
 log = logging.getLogger("denovo_eval")
 

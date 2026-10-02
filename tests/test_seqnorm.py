@@ -2,8 +2,8 @@ import pandas as pd
 import pytest
 
 from conftest import SAMPLES, require_ref
-from peaksparity import peaks_export as pe
-from peaksparity.seqnorm import (
+from proteoscan import peaks_export as pe
+from proteoscan.seqnorm import (
     canonical,
     equal_modseq,
     format_delta,

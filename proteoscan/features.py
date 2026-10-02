@@ -17,7 +17,7 @@ Algorithms (``algorithm=``)
     metabo      MassTraceDetection -> ElutionPeakDetection -> FeatureFindingMetabo with
                 the "peptides" isotope model (fast, trace based).
     multiplex   FeatureFinderMultiplexAlgorithm in label-free mode.
-    traces      peaksparity.feature_traces: numba mass-trace linking, valley splitting and
+    traces      proteoscan.feature_traces: numba mass-trace linking, valley splitting and
                 averagine isotope grouping (no pyopenms algorithm; fast).
 
 Whatever algorithm is used, every feature is re-quantified on the raw MS1 centroids
@@ -28,7 +28,7 @@ This makes ``area`` comparable between algorithms and with PEAKS "Area".
 
 CLI::
 
-    python -m peaksparity.features <mzML> --config configs/features_lumos_120k.yml \
+    python -m proteoscan.features <mzML> --config configs/features_lumos_120k.yml \
         --out <dir> [--threads 16] [--isolation-window 1.6]
 
 writes <dir>/<stem>.features.parquet, <stem>.ms2_features.parquet and <stem>.featureXML.
@@ -109,7 +109,7 @@ DEFAULT_OPENMS: dict[str, dict[str, Any]] = {
         "ffm:mz_scoring_by_elements": "false",
         "ffm:report_chromatograms": "false",
     },
-    "traces": {},  # see peaksparity.feature_traces.DEFAULTS
+    "traces": {},  # see proteoscan.feature_traces.DEFAULTS
     "multiplex": {
         "algorithm:labels": "",
         "algorithm:charge": "1:6",

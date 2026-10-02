@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compare detected MS1 features (peaksparity.features parquet) with PEAKS's features.csv.
+"""Compare detected MS1 features (proteoscan.features parquet) with PEAKS's features.csv.
 
 Usage::
 
@@ -42,7 +42,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from peaksparity.features import (C13_DELTA, _lookup, _ms1_arrays, assign_ms2_to_features,  # noqa: E402
+from proteoscan.features import (C13_DELTA, _lookup, _ms1_arrays, assign_ms2_to_features,  # noqa: E402
                                   load_ms1, read_ms2_metadata)
 
 
@@ -313,7 +313,7 @@ def main(argv=None) -> None:
     ap.add_argument("--mzml", required=True)
     ap.add_argument("--ms2", help="ms2_features.parquet (default: next to --features)")
     ap.add_argument("--mgf", help="PEAKS MGF export of the same run")
-    ap.add_argument("--cache", default="/drive_a/drew/peaks-parity-work/features/cache")
+    ap.add_argument("--cache", default="/drive_a/drew/proteoscan-work/features/cache")
     ap.add_argument("--out")
     ap.add_argument("--label", default="")
     ap.add_argument("--ppm", type=float, default=10.0)

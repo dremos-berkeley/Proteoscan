@@ -1,6 +1,6 @@
 """End-to-end driver: mzML (or Thermo raw) -> PEAKS-format export directory.
 
-    python -m peaksparity.pipeline --config configs/peaks_facility_human.yml \
+    python -m proteoscan.pipeline --config configs/peaks_facility_human.yml \
         --input run.mzML --out work/run1 [--sample-name "Sample 1"] [--ref <PEAKS export dir>]
         [--mode tda|imitate --model model.pkl] [--features features.parquet]
 
@@ -38,7 +38,7 @@ from .peaks_export import write_export
 from .rescore import apply_imitation, best_per_spectrum, minus10lgp, rescore_tda
 from .rescore_features import compute_features
 
-log = logging.getLogger("peaksparity.pipeline")
+log = logging.getLogger("proteoscan.pipeline")
 
 
 def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: SearchConfig):
@@ -94,7 +94,7 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
     feature. Validated by paired entrapment (docs/STATUS.md)."""
     from .decoys import read_fasta
     from .twopass import add_protein_features, merge_passes, protein_support, rerank
-    import peaksparity.rescore_features as rf
+    import proteoscan.rescore_features as rf
     pq = out / "candidates_features_2pass.parquet"
     if pq.exists():
         feat2 = pd.read_parquet(pq)

@@ -1,9 +1,9 @@
-"""Tests for peaksparity.denovo_features (CAA / tag features against de novo calls)."""
+"""Tests for proteoscan.denovo_features (CAA / tag features against de novo calls)."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from peaksparity.denovo_features import DENOVO_FEATURE_COLUMNS, add_denovo_features, denovo_features
+from proteoscan.denovo_features import DENOVO_FEATURE_COLUMNS, add_denovo_features, denovo_features
 
 
 def _dn(rows):

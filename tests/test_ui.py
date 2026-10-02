@@ -1,4 +1,4 @@
-"""Tests for peaksparity.ui (self-contained HTML results viewer) on a small synthetic export."""
+"""Tests for proteoscan.ui (self-contained HTML results viewer) on a small synthetic export."""
 import json
 import os
 import re
@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from peaksparity import ui
-from peaksparity.peaks_export import PeaksExport, canonical_columns, write_export
+from proteoscan import ui
+from proteoscan.peaks_export import PeaksExport, canonical_columns, write_export
 
 SRC = "RUN_1.raw"
 PROT_A = "MKAAAPEPTKLLSMAYKGGFFYTPRWWW"
@@ -225,7 +225,7 @@ def test_spectrum_size_cap(export_dir, tmp_path):
 
 
 def test_cli_subcommand(export_dir, tmp_path):
-    from peaksparity.cli import main
+    from proteoscan.cli import main
     out = tmp_path / "cli.html"
     main(["ui", "--export", export_dir, "--out", str(out), "--frag-tol", "20", "--frag-unit", "ppm"])
     _p, data, _s, _c = _parse(out)

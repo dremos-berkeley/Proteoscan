@@ -326,7 +326,7 @@ def run_denovo_queries(mzml: str | Path, queries: pd.DataFrame, model_ckpt: str 
         override the precursor written to the MGF. Other columns are ignored.
     Shards are written as MGFs (SCANS = id), run as independent ``casanovo sequence`` processes
     (shard k on ``gpus[k % len(gpus)]``, ``threads_per_shard`` CPU threads each) and merged.
-    ``casanovo_bin`` None runs :mod:`peaksparity.casanovo_fastio` (same predictions, mzTab
+    ``casanovo_bin`` None runs :mod:`proteoscan.casanovo_fastio` (same predictions, mzTab
     written without Casanovo's slow per-PSM ProForma parsing). ``precision="16-mixed"`` halves
     GPU time; on 2,000 Jurkat spectra 95 % of picked calls are identical to fp32 (98 % of the
     top-scoring half) and the precursor-consistent fraction is unchanged.
@@ -372,7 +372,7 @@ def run_denovo_queries(mzml: str | Path, queries: pd.DataFrame, model_ckpt: str 
         for v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
             env[v] = str(threads_per_shard)
         if casanovo_bin is None:  # the casanovo CLI with fast mzTab writing (casanovo_fastio)
-            launcher = [sys.executable, "-m", "peaksparity.casanovo_fastio"]
+            launcher = [sys.executable, "-m", "proteoscan.casanovo_fastio"]
             env["PYTHONPATH"] = os.pathsep.join(
                 [str(Path(__file__).resolve().parents[1])] + [x for x in [env.get("PYTHONPATH")] if x])
         else:
