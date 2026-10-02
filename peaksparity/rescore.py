@@ -45,13 +45,25 @@ def rescore_tda(df: pd.DataFrame, feature_cols=None, seed: int = 0) -> pd.DataFr
         work[["specid", "target", "scan_key", "peptide_sage", "proteins"] + cols],
         target_column="target", spectrum_columns="scan_key", peptide_column="peptide_sage",
         protein_column="proteins", feature_columns=cols, copy_data=False)
-    results, models = mokapot.brew(ds, test_fdr=0.01, max_workers=4, rng=seed)
-    psms = results.confidence_estimates["psms"] if hasattr(results, "confidence_estimates") else results.psms
-    # mokapot returns only targets in its confidence tables; recover scores for every row from the model
-    scores = np.zeros(len(work))
-    for m in models:
-        scores += m.predict(ds)
-    scores /= max(len(models), 1)
+    scores = None
+    for test_fdr in (0.01, 0.05, 0.10):
+        try:
+            results, models = mokapot.brew(ds, test_fdr=test_fdr, max_workers=4, rng=seed)
+            scores = np.zeros(len(work))
+            for m in models:
+                scores += m.predict(ds)
+            scores /= max(len(models), 1)
+            break
+        except RuntimeError as e:  # "No PSMs found below the eval_fdr" on small/weak inputs
+            log.warning("mokapot failed at test_fdr %.2f (%s); relaxing", test_fdr, e)
+    if scores is None:
+        # last resort: a target/decoy logistic regression on standardised features
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        Xs = StandardScaler().fit_transform(X.to_numpy())
+        clf = LogisticRegression(max_iter=500).fit(Xs, work["target"].to_numpy())
+        scores = clf.decision_function(Xs)
+        log.warning("mokapot unusable; used logistic regression target/decoy rescoring")
     work["score"] = scores
     work["minus10lgp"] = minus10lgp(work["score"], work["is_decoy"])
     return work.drop(columns=["specid", "target", "scan_key"])
