@@ -88,7 +88,7 @@ def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
 
 
 def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list[Path], fixed: dict,
-                   processes: int, candidates_per_spectrum: int) -> pd.DataFrame:
+                   processes: int, candidates_per_spectrum: int, fragment_model: str = "HCD2021") -> pd.DataFrame:
     """PEAKS DB-style second pass: rescore pass 1, accept, re-search every query against the
     accepted proteins (plus their decoys), merge candidates and add the decoy-fused protein-support
     feature. Validated by paired entrapment (docs/STATUS.md)."""
@@ -132,7 +132,7 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
         new = merged.loc[merged["from_pass2"] == 1, [c for c in c2.columns if c in merged.columns]].reset_index(drop=True)
         if len(new):
             ref = acc1[acc1["source_file"] == mzml.name]
-            new = compute_features(new, mzml, ms2pip_model="HCD2021",
+            new = compute_features(new, mzml, ms2pip_model=fragment_model,
                                    ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes,
                                    rt_reference=ref)
             new["from_pass2"] = 1
@@ -195,7 +195,8 @@ def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
 
 def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", model_path: str | None = None,
         sample_name: str = "Sample 1", processes: int = 8, ref: str | None = None,
-        features_path: str | None = None, candidates_per_spectrum: int = 3, two_pass: bool = True) -> dict:
+        features_path: str | None = None, candidates_per_spectrum: int = 3, two_pass: bool = True,
+        fragment_model: str = "HCD2021") -> dict:
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     stats: dict = {}
@@ -222,13 +223,12 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
             cands = attach_entries(cands, entries)
             cands["rt"] = cands["raw_rt"].fillna(cands["rt"])
             log.info("%s: %d candidates (%.0fs)", mzml.name, len(cands), time.time() - t0)
-            model = "HCD2021"
-            parts.append(compute_features(cands, mzml, ms2pip_model=model,
+            parts.append(compute_features(cands, mzml, ms2pip_model=fragment_model,
                                           ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes))
         feat = pd.concat(parts, ignore_index=True)
         feat.to_parquet(scored_pq)
     if two_pass:
-        feat = stage_two_pass(feat, cfg, out, mzmls, fixed, processes, candidates_per_spectrum)
+        feat = stage_two_pass(feat, cfg, out, mzmls, fixed, processes, candidates_per_spectrum, fragment_model)
     if mode == "imitate":
         with open(model_path, "rb") as fh:
             scored = apply_imitation(pickle.load(fh), feat)
@@ -292,11 +292,14 @@ def main(argv=None):
     ap.add_argument("--candidates", type=int, default=3, help="candidates kept per spectrum")
     ap.add_argument("--ref", help="PEAKS export dir to compare against")
     ap.add_argument("--single-pass", action="store_true", help="skip the protein-restricted second pass")
+    ap.add_argument("--fragment-model", default="HCD2021",
+                    help="fragment-intensity predictor: an MS2PIP model name, or peptdeep:<ckpt> / "
+                         "peptdeep:hcd=<ckpt>,cid=<ckpt> (docs/IONTRAP_MODEL.md)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = SearchConfig.from_yaml(a.config)
     stats = run(cfg, [Path(m) for m in a.input], Path(a.out), a.mode, a.model, a.sample_name, a.processes,
-                a.ref, a.features, a.candidates, two_pass=not a.single_pass)
+                a.ref, a.features, a.candidates, two_pass=not a.single_pass, fragment_model=a.fragment_model)
     print(json.dumps(stats, indent=2))
 
 

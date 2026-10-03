@@ -107,3 +107,10 @@ acquisition, excluded); "at 1%" = each method's own accepted list truncated at a
 Conclusion: parity in sensitivity and accuracy with PEAKS + DL boost on synthetic ground truth.
 Full tables: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.{md,csv}; script
 scripts/aggregate_proteometools.py.
+
+## Ion-trap fragment-intensity model (2026-10-03, docs/IONTRAP_MODEL.md)
+peptdeep MS2 models fine-tuned on 52 further ProteomeTools pools (HCD-IT and CID-IT; validation on 8
+more, benchmark pools never used). Benchmark (23 pools, 3 mokapot seeds): HCD-IT true peptides 803 -> 838
+(19 of 23 pools up), CID-IT 805 -> 818 (20 up), measured FDP unchanged within noise. Jurkat: no gain (the
+model predicts turbo-scan Jurkat spectra no better than MS2PIP). Opt-in via `--fragment-model peptdeep:...`;
+MS2PIP HCD2021 remains the default.

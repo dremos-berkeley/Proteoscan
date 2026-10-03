@@ -75,20 +75,34 @@ def _longest_run(mask: np.ndarray) -> int:
     return best
 
 
-class SpectrumStore:
-    """Random access to MS2 peak lists of an mzML by raw scan number (pyopenms on-disc)."""
+_ACT_RE = re.compile(r"@([a-z]+)([0-9.]+)")
 
-    def __init__(self, mzml: str | Path):
+
+class SpectrumStore:
+    """Random access to MS2 peak lists of an mzML by raw scan number (pyopenms on-disc).
+    With scan_info=True also records per MS2 scan the activation and NCE (from the Thermo filter
+    string) and the scan window: self.info[scan] = (activation, nce, lo_mz, hi_mz)."""
+
+    def __init__(self, mzml: str | Path, scan_info: bool = False):
         import pyopenms as oms
         self._od = oms.OnDiscMSExperiment()
         if not self._od.openFile(str(mzml)):
             raise FileNotFoundError(mzml)
         meta = self._od.getMetaData()
         self._index = {}
+        self.info = {}
         for i in range(meta.getNrSpectra()):
-            m = re.search(r"scan=(\d+)", meta[i].getNativeID())
-            if m and meta[i].getMSLevel() == 2:
-                self._index.setdefault(int(m.group(1)), i)
+            sp = meta[i]
+            m = re.search(r"scan=(\d+)", sp.getNativeID())
+            if m and sp.getMSLevel() == 2:
+                sc = int(m.group(1))
+                self._index.setdefault(sc, i)
+                if scan_info and sc not in self.info:
+                    f = str(sp.getMetaValue("filter string")) if sp.metaValueExists("filter string") else ""
+                    a = _ACT_RE.search(f)
+                    w = sp.getInstrumentSettings().getScanWindows()
+                    self.info[sc] = (a.group(1) if a else "hcd", float(a.group(2)) if a else float("nan"),
+                                     float(w[0].begin) if len(w) else 0.0, float(w[0].end) if len(w) else 1e9)
 
     def peaks(self, scan: int):
         i = self._index.get(int(scan))
@@ -170,6 +184,117 @@ def ms2pip_correlations(df: pd.DataFrame, mzml: str | Path, model: str = "HCD202
                          "residue_coverage": cov_both}, index=df.index)
 
 
+_PREDICTORS: dict = {}
+
+
+def _predictor(ckpt: str):
+    from .fragpred import PeptdeepPredictor
+    if ckpt not in _PREDICTORS:
+        _PREDICTORS[ckpt] = PeptdeepPredictor(ckpt)
+    return _PREDICTORS[ckpt]
+
+
+def parse_peptdeep_spec(spec: str) -> tuple[dict[str, str], str]:
+    """"peptdeep:<ckpt>[#ions]" or "peptdeep:hcd=<ckpt>,cid=<ckpt>[#ions]" -> ({activation: ckpt}, ions).
+    A single checkpoint serves every activation ("*"). ckpt "released" = the released generic model.
+    ions: "by" (b/y 1+, the MS2PIP feature definition; default) or "all" (every fragment type the
+    model predicts that is observable: charge <= precursor charge, m/z inside the scan window)."""
+    body = spec.split(":", 1)[1]
+    body, _, ions = body.partition("#")
+    if "=" in body.split(",")[0] and not Path(body).exists():
+        ck = dict(x.split("=", 1) for x in body.split(","))
+    else:
+        ck = {"*": body}
+    return ck, (ions or "by")
+
+
+def peptdeep_correlations(df: pd.DataFrame, mzml: str | Path, spec: str, ms2_tolerance: float = 0.5,
+                          chunk: int = 50_000) -> pd.DataFrame:
+    """Same columns as ms2pip_correlations, from an AlphaPeptDeep model.
+    Observed: log2(max intensity within tol / TIC + 0.001) per ion; predicted: the model's
+    intensities renormalised to sum 1 over the same ions, log2(x + 0.001) (MS2PIP's target scale).
+    Each PSM is predicted at its scan's NCE (Thermo filter string) with the checkpoint of its
+    activation. Rows are processed in chunks of `chunk` PSMs (bounded memory); predictions are
+    deterministic (eval mode, input-order independent batching by length)."""
+    from .fragpred import fragment_mz, parse_peptide, valid_mask
+    ckpts, ions = parse_peptdeep_spec(spec)
+    store = SpectrumStore(mzml, scan_info=True)
+    n = len(df)
+    corr = np.zeros(n); cos = np.zeros(n); frac = np.zeros(n)
+    longest_b = np.zeros(n); longest_y = np.zeros(n); n_obs = np.zeros(n); cov_both = np.zeros(n)
+    scans = df["scan"].to_numpy().astype(int)
+    peps = df["peptide_sage"].to_numpy(); zs = df["charge"].to_numpy().astype(int)
+    order = np.argsort(scans, kind="stable")
+    parsed: dict = {}
+    for c0 in range(0, n, chunk):
+        idx = order[c0:c0 + chunk]
+        rows = []
+        for i in idx:
+            p = peps[i]
+            if p not in parsed:
+                parsed[p] = parse_peptide(p)
+            seq, res, mods, sites, ok = parsed[p]
+            inf = store.info.get(int(scans[i]))
+            if inf is None or not ok or len(seq) < 2 or len(seq) > 60:
+                continue
+            act, nce, lo, hi = inf
+            ck = ckpts.get(act, ckpts.get("*"))
+            if ck is None:
+                continue
+            rows.append((i, ck, seq, mods, sites, int(max(1, min(zs[i], 6))), 30.0 if np.isnan(nce) else nce, lo, hi))
+        if not rows:
+            continue
+        r = pd.DataFrame(rows, columns=["i", "ck", "seq", "mods", "sites", "z", "nce", "lo", "hi"])
+        preds = {}
+        for ck, g in r.groupby("ck", sort=True):
+            P = _predictor(ck)
+            out = P.predict(g["seq"], g["mods"], g["sites"], g["z"], nce=g["nce"].to_numpy())
+            for i, m in zip(g["i"].to_numpy(), out):
+                preds[int(i)] = (m, P.frag_types)
+        cache_scan, cache = None, None
+        for t in r.itertuples(index=False):
+            i = int(t.i)
+            pm, ftypes = preds[i]
+            sc = int(scans[i])
+            if sc != cache_scan:
+                cache_scan, cache = sc, store.peaks(sc)
+            if cache is None or len(cache[0]) == 0:
+                continue
+            mz, it = cache
+            tic = float(it.sum()) or 1.0
+            res = parsed[peps[i]][1]
+            theo = fragment_mz(res, ftypes)
+            if ions == "all":
+                use = valid_mask(theo, ftypes, t.z, t.lo, t.hi)
+            else:
+                use = np.zeros(theo.shape, bool)
+                use[:, [ftypes.index("b_z1"), ftypes.index("y_z1")]] = True
+            tm = theo[use]; pl = np.clip(pm[use].astype(float), 0, None)
+            obs = observed_log2(tm, mz, it, ms2_tolerance, tic)
+            s = pl.sum()
+            pred = np.log2((pl / s if s > 0 else pl) + 0.001)
+            corr[i] = _pearson(obs, pred)
+            o_lin = np.clip(np.power(2.0, obs) - 0.001, 0, None)
+            denom = np.linalg.norm(o_lin) * np.linalg.norm(pl)
+            cos[i] = float(np.dot(o_lin, pl) / denom) if denom > 0 else 0.0
+            strong = pl >= 0.05 * (pl.max() if pl.max() > 0 else 1)
+            frac[i] = float((o_lin[strong] > 0).mean()) if strong.any() else 0.0
+            # ion-series evidence on b/y 1+ (as in ms2pip_correlations; b in N->C order, y by ion number)
+            bth = theo[:, ftypes.index("b_z1")]; yth = theo[::-1, ftypes.index("y_z1")]
+            ob = observed_log2(bth, mz, it, ms2_tolerance, tic) > -9.9
+            oy = observed_log2(yth, mz, it, ms2_tolerance, tic) > -9.9
+            longest_b[i] = _longest_run(ob); longest_y[i] = _longest_run(oy)
+            n_obs[i] = int(ob.sum() + oy.sum())
+            if len(ob):
+                b_bound = np.concatenate([[True], ob, [True]])
+                y_bound = np.concatenate([[True], oy[::-1], [True]])
+                covered = [(b_bound[k - 1] or y_bound[k - 1]) and (b_bound[k] or y_bound[k]) for k in range(1, len(ob) + 2)]
+                cov_both[i] = float(np.mean(covered))
+    return pd.DataFrame({"ms2_corr": corr, "ms2_cos": cos, "ms2_frac_pred_found": frac,
+                         "longest_b_obs": longest_b, "longest_y_obs": longest_y, "n_ions_obs": n_obs,
+                         "residue_coverage": cov_both}, index=df.index)
+
+
 def deeplc_predictions(df: pd.DataFrame, calibrate_on: pd.Series | None = None,
                        reference_df: pd.DataFrame | None = None) -> np.ndarray:
     """Predicted RT (minutes) per PSM, calibrated on confident target PSMs of the same run:
@@ -212,14 +337,19 @@ def sequence_features(df: pd.DataFrame) -> pd.DataFrame:
 def compute_features(df: pd.DataFrame, mzml: str | Path, ms2pip_model: str = "HCD2021",
                      ms2_tolerance: float = 0.5, processes: int = 8, do_rt: bool = True,
                      do_ms2: bool = True, rt_reference: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Append feature columns to a copy of df (one run)."""
+    """Append feature columns to a copy of df (one run).
+    ms2pip_model: an MS2PIP model name (default HCD2021), or "peptdeep:<spec>" for an AlphaPeptDeep
+    checkpoint (see peptdeep_correlations), e.g. the ion-trap models of docs/IONTRAP_MODEL.md."""
     out = df.copy()
     feats = sequence_features(out)
     for c in feats.columns:
         out[c] = feats[c]
     if do_ms2:
-        log.info("ms2pip correlations (%s, tol %.2f Da) for %d PSMs", ms2pip_model, ms2_tolerance, len(out))
-        ms2 = ms2pip_correlations(out, mzml, ms2pip_model, ms2_tolerance, processes)
+        log.info("fragment correlations (%s, tol %.2f Da) for %d PSMs", ms2pip_model, ms2_tolerance, len(out))
+        if str(ms2pip_model).startswith("peptdeep:"):
+            ms2 = peptdeep_correlations(out, mzml, ms2pip_model, ms2_tolerance)
+        else:
+            ms2 = ms2pip_correlations(out, mzml, ms2pip_model, ms2_tolerance, processes)
         for c in ms2.columns:
             out[c] = ms2[c].fillna(0.0).to_numpy()
     if do_rt:
