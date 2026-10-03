@@ -114,3 +114,14 @@ more, benchmark pools never used). Benchmark (23 pools, 3 mokapot seeds): HCD-IT
 (19 of 23 pools up), CID-IT 805 -> 818 (20 up), measured FDP unchanged within noise. Jurkat: no gain (the
 model predicts turbo-scan Jurkat spectra no better than MS2PIP). Opt-in via `--fragment-model peptdeep:...`;
 MS2PIP HCD2021 remains the default.
+
+## PEAKS Deep Learning Boost on vs off, ProteomeTools (2026-10-03)
+Means over 23 pools, each method at its own claimed 1% FDR:
+| scan type | PEAKS boost off: PSMs / FDP / true peptides | PEAKS boost on | Proteoscan |
+|---|---|---|---|
+| HCD ion trap | 7,659 / 0.98% / 800 | 8,796 / 1.31% / 831 | 8,910 / 1.14% / 815 (fine-tuned model: 9,396 / 1.19% / 838) |
+| CID ion trap | 7,899 / 0.96% / 798 | 9,056 / 1.34% / 830 | 8,535 / 1.13% / 805 (fine-tuned: 9,054 / 1.24% / 818) |
+| HCD Orbitrap | 14,715 / 0.55% / 798 | 18,049 / 0.94% / 841 | 18,863 / 0.90% / 848 |
+The boost adds about 4% true peptides on these clean synthetic spectra (82% of PSMs on the Jurkat
+lysate); Proteoscan's rescoring matches or exceeds the boosted result and exceeds the unboosted one
+by 2-6%. Full table: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.csv.
