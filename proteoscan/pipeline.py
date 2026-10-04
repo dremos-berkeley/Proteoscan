@@ -29,7 +29,7 @@ import pandas as pd
 
 from dataclasses import replace as dataclasses_replace
 
-from .comet_search import read_comet, run_comet
+from .comet_search import fixed_mod_deltas, read_comet, run_comet
 from .config import SearchConfig
 from .export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
 from .fdr import threshold_at_fdr
@@ -200,7 +200,7 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     stats: dict = {}
-    fixed = {r: m.delta for m in cfg.fixed_modifications for r in m.residues if len(r) == 1}
+    fixed = fixed_mod_deltas(cfg)
     scored_pq = out / "candidates_features.parquet"
     mzmls: list[Path] = []
     for p in inputs:
