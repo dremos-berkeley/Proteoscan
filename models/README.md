@@ -11,3 +11,13 @@
   ion-trap HCD PSMs from the HeLa runs. Held-out HeLa run: 42% full-sequence accuracy (I=L) vs 17%
   for the released model; Jurkat (turbo-scan acquisition): 20% vs 18% with 5 beams and
   precursor-consistent candidate selection. See docs/DENOVO.md.
+
+## Validity after the 2026-10 corrections (docs/STATUS.md "Corrections")
+- `score_prop_v1`, `score_prop_v1b_ions`, `score_prop_v2`: **invalidated**. Trained on candidates of
+  the propionamide search, which carried a hidden static +57 on every Cys (P1), so their Cys
+  candidates were C+114 / C+128 forms. Retrain from corrected candidates and the decoy-inclusive
+  PEAKS export with `scripts/train_score_model.py`.
+- `score_cam_unfiltered_v1`, `imitation_jurkat_v1`: trained on fixed-CAM searches (unaffected by P1)
+  and still valid, but their feature lists contain `has_cys`, which is no longer a rescoring feature.
+  They keep working (`apply_imitation` reindexes missing columns, and `has_cys` is still computed by
+  `sequence_features`); retrain without it when next updated.

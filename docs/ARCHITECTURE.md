@@ -35,7 +35,9 @@ inspect the PEAKS binary.
 6. `fdr`       Decoy-fusion-style target/decoy FDR at PSM, peptide sequence and protein
                group level, thresholds chosen exactly the way PEAKS reports them
                (peptide -10lgP threshold at 1% peptide FDR; protein -10lgP >= 15 and
-               >= 1 unique peptide).
+               >= 1 unique peptide). `run_stats.json` says whether the FDR is estimable
+               (`fdr_estimable`, decoy counts at the threshold); for small defined mixtures
+               see README "Small defined mixtures".
 7. `proteins`  Protein score, grouping and "Top" flag following PEAKS rules.
 8. `export`    Write the PEAKS CSV set with identical columns (`proteoscan.peaks_export`).
 9. `concord`   Compare any export directory to a PEAKS reference; the optimization loop
