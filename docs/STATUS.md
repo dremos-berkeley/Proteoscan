@@ -151,17 +151,47 @@ docs/DENOVO_FEATURES.md numbers (trained on propionamide candidates with the hid
 `score_prop_v1`, `v1b_ions`, `v2` invalidated, models/README.md). The HeLa, Jurkat and
 ProteomeTools tables above were produced with the in-sample scores of P3.
 
-ProteomeTools regression with the corrections (same 23 pools, configs/peaks_facility_human.yml,
-full rerun, mokapot seed 0; /drive_a/drew/peaks-parity-work/fixcys_regress/SUMMARY_truth.{md,csv},
-before_after.csv). Means over pools, before -> after; per-pool up/down; seed noise (SD over three
-seeds of the 23-pool mean, iontrap_model/results/bench_seeds.csv) is 4.95 (HCD-IT) and 2.89 (CID-IT)
-true peptides at 1% FDP and about 0.02 percentage points of FDP.
+ProteomeTools regression with the corrections (same 23 pools, full rerun, mokapot seed 0; same
+configs as the baseline: configs/peaks_facility_human.yml for the ion-trap scan types,
+configs/peaks_hela_hcd_ft.yml (0.02 Da) for HCD Orbitrap; /drive_a/drew/peaks-parity-work/fixcys_regress/
+SUMMARY_truth.{md,csv} and SUMMARY_truth_ot002.{md,csv}, before_after*.csv). Means over pools, before -> after;
+per-pool up / down. Noise: SD over three mokapot seeds of the 23-pool mean is 4.95 (HCD-IT) and 2.89 (CID-IT)
+true peptides at 1% FDP and about 0.02 percentage points of FDP (iontrap_model/results/bench_seeds.csv); for HCD
+Orbitrap, from the rescoring ablation below, 1.1-1.5 true peptides, 0.7-1.2 true peptides at 1% FDP and
+0.01 percentage points of FDP.
 | scan type | PSMs | measured FDP | true peptides | true peptides at measured 1% FDP |
 |---|---|---|---|---|
 | HCD ion trap | 8,910 -> 8,851 | 1.14% -> 1.11% | 815 -> 818 (9 up / 10 down) | 707 -> 738 (median change 0; 11 up / 9 down) |
 | CID ion trap | 8,535 -> 8,365 | 1.13% -> 1.13% | 805 -> 801 (8 up / 11 down) | 728 -> 744 (median 0; 10 up / 10 down) |
-| HCD Orbitrap | 18,863 -> 16,741 | 0.90% -> 0.71% | 848 -> 808 (0 up / 23 down) | 748 -> 754 (median -23; 2 up / 20 down) |
-Ion-trap scan types: no regression (FDP unchanged or lower, true peptides within noise; the mean
-gain at 1% FDP comes from a few pools whose baseline list was truncated by an early false PSM).
-HCD Orbitrap: fewer PSMs and lower FDP, and fewer true peptides in every pool (mean -40). This is a
-sensitivity loss that has not been explained yet, and it blocks the merge until it is.
+| HCD Orbitrap | 18,863 -> 18,684 | 0.90% -> 0.88% | 848 -> 847 (8 up / 11 down; median 0) | 748 -> 787 (median 0; 10 up / 10 down) |
+No regression on any scan type: measured FDP is unchanged or lower, true peptides are within noise,
+and fewer PSMs with unchanged true peptides is the expected effect of removing in-sample scores (P3).
+The mean gains in "true peptides at measured 1% FDP" come from a few pools (HCD-OT +589 and +328)
+whose baseline list was truncated by an early false PSM tied at the old -10lgP ceiling (see the P2
+finding below); the medians are 0.
+
+An earlier version of this regression searched HCD Orbitrap with the facility config (0.5 Da, low-res
+binning) instead of the baseline's 0.02 Da config and showed 848 -> 808 true peptides. That was the
+configuration change, not the corrections: a rescoring-only ablation on cached candidate tables
+(no re-search; 23 pools x 3 mokapot seeds; /drive_a/drew/peaks-parity-work/ot_ablation/arm_table.csv)
+gives, as true peptides (SD over seeds) / measured FDP:
+| candidates | master scoring (in-sample, with has_cys) | in-sample, no has_cys | cross-validated, with has_cys | cross-validated, no has_cys (branch) |
+|---|---|---|---|---|
+| baseline HCD-OT, 0.02 Da | 847.0 (1.5) / 0.90% | - | - | 845.5 (1.1) / 0.85% |
+| HCD-OT searched at 0.5 Da | 812.4 (1.2) / 0.74% | 810.2 (5.2) / 0.75% | 809.8 (7.6) / 0.74% | 811.0 (2.0) / 0.72% |
+Neither the cross-validated scores nor dropping has_cys explains a loss; the branch scoring costs
+about 1.5 true peptides on matched candidates (about one seed SD), consistent with removing
+in-sample optimism, and raises the mean HCD-OT threshold only from 26.53 to 26.65. On 8 HCD-IT pools
+the four scoring arms do not differ systematically (pool 1 varies by up to 220 true peptides between
+seeds in every arm).
+
+P2 finding: re-filtering identical scores with the old flat ceiling instead of the extrapolated tail
+leaves PSMs, true peptides and FDP unchanged in all 23 HCD-OT pools, but changes "true peptides at
+measured 1% FDP" in 2 pools (+3, -307): with the flat ceiling every PSM above the best decoy ties,
+so the score-ordered list is ordered arbitrarily among them and one early false PSM can truncate it.
+This tie-breaking artefact is the source of the large single-pool swings in that metric in earlier
+tables (STATUS rows before 2026-10-05, docs/IONTRAP_MODEL.md).
+
+Also observed: mokapot brew with max_workers > 1 is not reproducible for a fixed seed (the fold
+models share one generator across threads); even with max_workers = 1, repeated runs differed on
+one pool (9,435 vs 9,073 PSMs). Single-seed comparisons carry that noise.
