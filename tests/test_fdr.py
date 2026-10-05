@@ -99,3 +99,27 @@ def test_reference_counting_units(k):
     assert len(exp.psms.drop_duplicates(["Scan", "Feature Id"])) == stats["psms"]
     assert exp.peptides.Peptide.map(sequence_key).nunique() == stats["sequences"]
     assert exp.peptides.Peptide.str.replace("I", "L").nunique() == stats["peptides"]
+
+
+def test_pseudocount():
+    c = fdr_curve(S, D, pseudocount=1)
+    assert c.fdr.tolist() == pytest.approx([1.0, 1.0, 2 / 3, 0.5, 0.75, 1.0])  # (D+1)/T
+    assert threshold_summary(S, D, 0.5, pseudocount=1) == {"threshold": 25.0, "n_target": 4, "n_decoy": 1, "fdr": 0.5}
+    assert threshold_at_fdr(S, D, 0.34, pseudocount=1) == math.inf
+    assert q_values(S, D, pseudocount=1).tolist() == pytest.approx([0.5, 0.5, 0.5, 0.5, 0.5, 0.75, 1.0])
+    assert threshold_at_fdr(S, D, 0.34) == threshold_at_fdr(S, D, 0.34, pseudocount=0) == 25
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_threshold_equals_qvalue_thresholding(seed):
+    rng = np.random.default_rng(seed)
+    n = int(rng.integers(5, 400))
+    s = np.round(rng.normal(0, 1, n), 1)  # rounding creates ties
+    d = rng.random(n) < rng.uniform(0.05, 0.6)
+    s[~d] += rng.uniform(0, 2)
+    for alpha in (0.0, 0.01, 0.05, 0.2):
+        for pc in (0, 1):
+            thr = threshold_at_fdr(s, d, alpha, pseudocount=pc)
+            q = q_values(s, d, pseudocount=pc)
+            passing = s[q <= alpha]
+            assert thr == (passing.min() if len(passing) else math.inf)

@@ -73,6 +73,19 @@ class SearchConfig:
     threads: int = 16
     fragment_bin_offset: float = 0.4          # only used by Comet-style low-res scoring
 
+    def __post_init__(self) -> None:
+        # A variable mod on a residue that also carries a fixed mod is stacked by Comet on top of the
+        # static delta (e.g. fixed CAM + variable CAM on C searches C+114), so refuse the combination.
+        def sites(m: Modification) -> set[str]:
+            return {m.residues} if m.residues in ("N-term", "C-term") else set(m.residues)
+        fixed = {s: m.name for m in self.fixed_modifications for s in sites(m)}
+        for m in self.variable_modifications:
+            clash = sorted(sites(m) & set(fixed))
+            if clash:
+                raise ValueError(f"variable modification {m.name!r} on {clash} overlaps fixed modification(s) "
+                                 f"{sorted({fixed[c] for c in clash})}; Comet would stack them. Make the residue "
+                                 "either fixed or variable.")
+
     @classmethod
     def from_yaml(cls, path: str | Path) -> "SearchConfig":
         raw: dict[str, Any] = yaml.safe_load(Path(path).read_text()) or {}

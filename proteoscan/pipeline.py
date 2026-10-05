@@ -29,10 +29,10 @@ import pandas as pd
 
 from dataclasses import replace as dataclasses_replace
 
-from .comet_search import read_comet, run_comet
+from .comet_search import fixed_mod_deltas, read_comet, run_comet
 from .config import SearchConfig
 from .export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
-from .fdr import threshold_at_fdr
+from .fdr import threshold_summary
 from .monoiso import PROTON
 from .peaks_export import write_export
 from .rescore import apply_imitation, best_per_spectrum, minus10lgp, rescore_tda
@@ -175,21 +175,49 @@ def stage_features_table(psms_tbl: pd.DataFrame, mzmls: list[Path], out: Path, f
     return build_features_table(pd.concat(parts, ignore_index=True, sort=False), psms_tbl, denovo_df, sample_name)
 
 
+MIN_DECOYS_AT_THRESHOLD = 10  # fewer decoy sequences at the threshold: the FDR estimate is not informative
+
+
 def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
     """PEAKS: the -10lgP threshold is set where the FDR over distinct sequences (I = L, best PSM
-    each) reaches cfg.peptide_fdr; PSMs of accepted sequences are listed down to -10lgP 20."""
+    each) reaches cfg.peptide_fdr; PSMs of accepted sequences are listed down to -10lgP 20.
+
+    Besides the accepted PSMs, returns stats that say whether the FDR is estimable: the sequence
+    counts at the threshold, D/T and the conservative (D+1)/T, the size of the decoy null behind
+    minus10lgp and its old ceiling 10*log10(n_decoys+1), whether the threshold lies above every decoy,
+    and fdr_estimable (>= MIN_DECOYS_AT_THRESHOLD decoy sequences at the threshold)."""
     t = top.copy()
     t["seqkey"] = t["stripped"].str.replace("I", "L")
     best = t.sort_values("minus10lgp", ascending=False).drop_duplicates("seqkey")
-    thr = threshold_at_fdr(best["minus10lgp"].to_numpy(), best["is_decoy"].to_numpy(), cfg.peptide_fdr)
+    bs, bd = best["minus10lgp"].to_numpy(), best["is_decoy"].to_numpy(bool)
+    summ = threshold_summary(bs, bd, cfg.peptide_fdr)
+    thr = summ["threshold"]
     ok = set(best.loc[best["minus10lgp"] >= thr, "seqkey"])
     floor = min(thr, psm_floor)
     acc = t[t["seqkey"].isin(ok) & (t["minus10lgp"] >= floor)]
     # the same peptide can win several precursor entries of one scan; PEAKS lists it once
     acc = acc.sort_values("minus10lgp", ascending=False).drop_duplicates(["source_file", "scan", "peptide_sage", "charge"])
     n_t, n_d = int((~acc["is_decoy"]).sum()), int(acc["is_decoy"].sum())
-    stats = dict(peptide_threshold=float(thr), psm_floor=float(floor), n_target_psms=n_t, n_decoy_psms=n_d,
-                 psm_fdr=n_d / max(n_t, 1))
+    n_null = int(t["is_decoy"].sum())  # decoy spectrum winners: the null minus10lgp was computed on
+    finite = bool(np.isfinite(thr))
+    T, D = (summ["n_target"], summ["n_decoy"]) if finite else (0, 0)
+    dec_scores = bs[bd & ~np.isnan(bs)]
+    above_all = bool(finite and (len(dec_scores) == 0 or thr > dec_scores.max()))
+    stats = dict(peptide_threshold=float(thr) if finite else None, psm_floor=float(floor),
+                 n_target_psms=n_t, n_decoy_psms=n_d, psm_fdr=n_d / max(n_t, 1),
+                 n_target_seqs_at_threshold=int(T), n_decoy_seqs_at_threshold=int(D),
+                 sequence_fdr=(D / T) if T else None, sequence_fdr_conservative=((D + 1) / T) if T else None,
+                 decoy_null_size=n_null, null_ceiling=float(10.0 * np.log10(n_null + 1)) if n_null else None,
+                 threshold_above_all_decoys=above_all, fdr_estimable=bool(D >= MIN_DECOYS_AT_THRESHOLD))
+    if not finite:
+        log.warning("peaks_filter: no threshold reaches %.3g sequence FDR; nothing accepted", cfg.peptide_fdr)
+    elif above_all:
+        log.warning("peaks_filter: threshold %.2f lies above every decoy sequence (%d target sequences accepted); "
+                    "the reported FDR rests on 0 decoys and is not estimable (conservative (D+1)/T = %.3g)",
+                    thr, T, 1.0 / T if T else float("nan"))
+    elif D < MIN_DECOYS_AT_THRESHOLD:
+        log.warning("peaks_filter: only %d decoy sequence(s) at threshold %.2f (%d targets); FDR estimate is "
+                    "imprecise (D/T = %.3g, (D+1)/T = %.3g)", D, thr, T, D / T, (D + 1) / T)
     return acc[~acc["is_decoy"]].copy(), stats
 
 
@@ -200,7 +228,7 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     stats: dict = {}
-    fixed = {r: m.delta for m in cfg.fixed_modifications for r in m.residues if len(r) == 1}
+    fixed = fixed_mod_deltas(cfg)
     scored_pq = out / "candidates_features.parquet"
     mzmls: list[Path] = []
     for p in inputs:

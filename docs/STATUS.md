@@ -125,3 +125,73 @@ Means over 23 pools, each method at its own claimed 1% FDR:
 The boost adds about 4% true peptides on these clean synthetic spectra (82% of PSMs on the Jurkat
 lysate); Proteoscan's rescoring matches or exceeds the boosted result and exceeds the unboosted one
 by 2-6%. Full table: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.csv.
+
+## Corrections (2026-10-05, branch fix/comet-fixed-mods-score-tail-cv)
+Three problems found in the 261003_proteoscan_test replication (propionamide config) and fixed:
+- **P1, hidden static +57 on Cys (bug).** `build_comet_params` started from `comet -p` defaults
+  (`add_C_cysteine = 57.021464`, `variable_mod01 = 15.9949 M`) and never zeroed them. Configs without
+  explicit fixed CAM (`configs/peaks_propionamide.yml`) searched every Cys as C+57 plus the variable
+  CAM/propionamide stack (C+114 / C+128): propionamide and free Cys were unsearchable, exported
+  `C(+57.02)` / `C(+71.04)` were really +114 / +128, and mokapot learned negative `has_cys` weights.
+  Fixed: all `add_*` and variable slots are zeroed first; `fixed_mod_deltas`; a variable mod on a
+  fixed residue is refused. Fixed-CAM configs (facility, HeLa, ProteomeTools) were not affected:
+  their comet.params differ from before only in already-zero lines, and Comet output is identical.
+- **P2, -10lgP ceiling on small runs (design limit).** `minus10lgp` tied every target above the best
+  decoy at 10*log10(n_decoys+1), and the FDR threshold could rest on 0 decoys with no warning. Now
+  the decoy tail is extrapolated above the best decoy, and `run_stats.json` reports decoy counts at
+  the threshold, (D+1)/T, the decoy null size and ceiling, and `fdr_estimable` (>= 10 decoy
+  sequences at the threshold). README "Small defined mixtures".
+- **P3, in-sample rescoring scores (methodological).** `rescore_tda` scored every PSM with the mean
+  of mokapot's fold models, i.e. with models trained on it. It now uses mokapot's cross-validated
+  (held-out, per-fold calibrated) scores, checked against mokapot's own; adds `mokapot_q`.
+  `has_cys` is no longer a rescoring feature.
+
+Superseded by these corrections: the "Score imitation (2026-09-30)" table above and
+docs/DENOVO_FEATURES.md numbers (trained on propionamide candidates with the hidden +57; models
+`score_prop_v1`, `v1b_ions`, `v2` invalidated, models/README.md). The HeLa, Jurkat and
+ProteomeTools tables above were produced with the in-sample scores of P3.
+
+ProteomeTools regression with the corrections (same 23 pools, full rerun, mokapot seed 0; same
+configs as the baseline: configs/peaks_facility_human.yml for the ion-trap scan types,
+configs/peaks_hela_hcd_ft.yml (0.02 Da) for HCD Orbitrap; /drive_a/drew/peaks-parity-work/fixcys_regress/
+SUMMARY_truth.{md,csv} and SUMMARY_truth_ot002.{md,csv}, before_after*.csv). Means over pools, before -> after;
+per-pool up / down. Noise: SD over three mokapot seeds of the 23-pool mean is 4.95 (HCD-IT) and 2.89 (CID-IT)
+true peptides at 1% FDP and about 0.02 percentage points of FDP (iontrap_model/results/bench_seeds.csv); for HCD
+Orbitrap, from the rescoring ablation below, 1.1-1.5 true peptides, 0.7-1.2 true peptides at 1% FDP and
+0.01 percentage points of FDP.
+| scan type | PSMs | measured FDP | true peptides | true peptides at measured 1% FDP |
+|---|---|---|---|---|
+| HCD ion trap | 8,910 -> 8,851 | 1.14% -> 1.11% | 815 -> 818 (9 up / 10 down) | 707 -> 738 (median change 0; 11 up / 9 down) |
+| CID ion trap | 8,535 -> 8,365 | 1.13% -> 1.13% | 805 -> 801 (8 up / 11 down) | 728 -> 744 (median 0; 10 up / 10 down) |
+| HCD Orbitrap | 18,863 -> 18,684 | 0.90% -> 0.88% | 848 -> 847 (8 up / 11 down; median 0) | 748 -> 787 (median 0; 10 up / 10 down) |
+No regression on any scan type: measured FDP is unchanged or lower, true peptides are within noise,
+and fewer PSMs with unchanged true peptides is the expected effect of removing in-sample scores (P3).
+The mean gains in "true peptides at measured 1% FDP" come from a few pools (HCD-OT +589 and +328)
+whose baseline list was truncated by an early false PSM tied at the old -10lgP ceiling (see the P2
+finding below); the medians are 0.
+
+An earlier version of this regression searched HCD Orbitrap with the facility config (0.5 Da, low-res
+binning) instead of the baseline's 0.02 Da config and showed 848 -> 808 true peptides. That was the
+configuration change, not the corrections: a rescoring-only ablation on cached candidate tables
+(no re-search; 23 pools x 3 mokapot seeds; /drive_a/drew/peaks-parity-work/ot_ablation/arm_table.csv)
+gives, as true peptides (SD over seeds) / measured FDP:
+| candidates | master scoring (in-sample, with has_cys) | in-sample, no has_cys | cross-validated, with has_cys | cross-validated, no has_cys (branch) |
+|---|---|---|---|---|
+| baseline HCD-OT, 0.02 Da | 847.0 (1.5) / 0.90% | - | - | 845.5 (1.1) / 0.85% |
+| HCD-OT searched at 0.5 Da | 812.4 (1.2) / 0.74% | 810.2 (5.2) / 0.75% | 809.8 (7.6) / 0.74% | 811.0 (2.0) / 0.72% |
+Neither the cross-validated scores nor dropping has_cys explains a loss; the branch scoring costs
+about 1.5 true peptides on matched candidates (about one seed SD), consistent with removing
+in-sample optimism, and raises the mean HCD-OT threshold only from 26.53 to 26.65. On 8 HCD-IT pools
+the four scoring arms do not differ systematically (pool 1 varies by up to 220 true peptides between
+seeds in every arm).
+
+P2 finding: re-filtering identical scores with the old flat ceiling instead of the extrapolated tail
+leaves PSMs, true peptides and FDP unchanged in all 23 HCD-OT pools, but changes "true peptides at
+measured 1% FDP" in 2 pools (+3, -307): with the flat ceiling every PSM above the best decoy ties,
+so the score-ordered list is ordered arbitrarily among them and one early false PSM can truncate it.
+This tie-breaking artefact is the source of the large single-pool swings in that metric in earlier
+tables (STATUS rows before 2026-10-05, docs/IONTRAP_MODEL.md).
+
+Also observed: mokapot brew with max_workers > 1 is not reproducible for a fixed seed (the fold
+models share one generator across threads); even with max_workers = 1, repeated runs differed on
+one pool (9,435 vs 9,073 PSMs). Single-seed comparisons carry that noise.

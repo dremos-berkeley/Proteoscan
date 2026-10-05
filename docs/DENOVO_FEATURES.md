@@ -1,5 +1,10 @@
 # De novo agreement features for rescoring (CAA, tag length)
 
+> **Superseded (2026-10):** the validation and score-imitation numbers below were produced on
+> candidates of the propionamide search, which carried a hidden static +57 on every Cys
+> (docs/STATUS.md "Corrections", P1). The feature definitions stand; the numbers need re-running on
+> corrected candidates.
+
 PEAKS DB scores every candidate partly by how well it agrees with the de novo sequence of the
 spectrum (docs/PEAKS_ALGORITHMS.md 2.1, feature 1 "CAA score"; section 6). This file documents
 our imitation: Casanovo calls for every (scan, precursor) query of a run, per-candidate

@@ -19,12 +19,16 @@ DrewR_Adam_91526 exports, see docs/PROTEIN_INFERENCE.md):
 * Protein-group level: a group counts as decoy when its top protein is a decoy; the group
   score is the top protein's -10lgP.
 * Threshold: PEAKS reports the score threshold chosen for a target FDR (e.g. peptide
-  -10lgP >= 23.02 at 1 % peptide FDR).  No q-value monotonisation is documented; we return
-  the *lowest* observed score t such that D(>= t) / T(>= t) <= alpha, scanning all
-  thresholds (so a non-monotone FDR curve can yield a threshold below a region where the
-  running ratio exceeds alpha, exactly as a scan from high to low scores that keeps the
-  last passing threshold would).  ``q_values`` gives the conventional monotone version
-  (min FDR over all thresholds <= the hit's score) for convenience.
+  -10lgP >= 23.02 at 1 % peptide FDR).  We return the *lowest* observed score t such that
+  D(>= t) / T(>= t) <= alpha.  This is the same accepted set as conventional q-value
+  thresholding: with q(x) = min over thresholds t <= x of FDR(t), a hit has q <= alpha exactly
+  when some threshold at or below its score passes, i.e. when its score >= the lowest passing
+  threshold.  So there is no separate "monotonised" variant; ``q_values`` gives the per-hit
+  q-values for convenience (tests/test_fdr.py checks the equivalence).
+* Pseudocount: every function takes a keyword-only ``pseudocount`` (default 0) and then uses
+  (D + pseudocount) / T.  The accepted-set criterion stays D/T (PEAKS parity; validated by
+  entrapment, docs/STATUS.md); (D + 1)/T is the conservative estimate reported alongside it,
+  which matters when few or no decoys pass (small defined mixtures, README).
 * Ties: all hits with the same score are accepted or rejected together.
 * Decoys are excluded from every reported count.
 """
@@ -56,12 +60,12 @@ def _arrays(scores, is_decoy):
     return s[ok], d[ok]
 
 
-def fdr_curve(scores, is_decoy):
+def fdr_curve(scores, is_decoy, *, pseudocount: int = 0):
     """FDR at every distinct score threshold.
 
     Returns a DataFrame sorted by threshold descending with columns ``threshold``,
-    ``n_target`` = T(>= t), ``n_decoy`` = D(>= t), ``fdr`` = D/T (inf when T = 0),
-    ``q_value`` = min over thresholds t' <= t of fdr(t').
+    ``n_target`` = T(>= t), ``n_decoy`` = D(>= t), ``fdr`` = (D + pseudocount)/T (inf when
+    T = 0), ``q_value`` = min over thresholds t' <= t of fdr(t').
     """
     s, d = _arrays(scores, is_decoy)
     if len(s) == 0:
@@ -76,19 +80,19 @@ def fdr_curve(scores, is_decoy):
     nt = cum_t[last]
     nd = cum_d[last]
     with np.errstate(divide="ignore", invalid="ignore"):
-        fdr = np.where(nt > 0, nd / np.maximum(nt, 1), np.inf)
+        fdr = np.where(nt > 0, (nd + pseudocount) / np.maximum(nt, 1), np.inf)
     q = np.minimum.accumulate(fdr[::-1])[::-1]
     return pd.DataFrame({"threshold": thr, "n_target": nt, "n_decoy": nd, "fdr": fdr, "q_value": q})
 
 
-def threshold_summary(scores, is_decoy, alpha):
-    """Lowest score threshold t with D(>= t) / T(>= t) <= alpha, with its counts.
+def threshold_summary(scores, is_decoy, alpha, *, pseudocount: int = 0):
+    """Lowest score threshold t with (D(>= t) + pseudocount) / T(>= t) <= alpha, with its counts.
 
     Returns a dict ``threshold`` (``inf`` when no threshold qualifies, so that nothing
     passes), ``n_target``, ``n_decoy`` and ``fdr`` at that threshold.  Hits pass when
     ``score >= threshold``.
     """
-    c = fdr_curve(scores, is_decoy)
+    c = fdr_curve(scores, is_decoy, pseudocount=pseudocount)
     ok = c[(c.fdr <= alpha) & (c.n_target > 0)] if len(c) else c
     if ok.empty:
         return {"threshold": math.inf, "n_target": 0, "n_decoy": 0, "fdr": 0.0}
@@ -97,19 +101,19 @@ def threshold_summary(scores, is_decoy, alpha):
             "n_decoy": int(r.n_decoy), "fdr": float(r.fdr)}
 
 
-def threshold_at_fdr(scores, is_decoy, alpha):
-    """Lowest observed score t with D(>= t) / T(>= t) <= alpha (``inf`` if none).
+def threshold_at_fdr(scores, is_decoy, alpha, *, pseudocount: int = 0):
+    """Lowest observed score t with (D(>= t) + pseudocount) / T(>= t) <= alpha (``inf`` if none).
 
-    Accept hits with ``score >= threshold_at_fdr(...)``.  See the module docstring for why
-    this is not monotonised.
+    Accept hits with ``score >= threshold_at_fdr(...)``; equivalent to accepting hits with
+    ``q_values(...) <= alpha`` (module docstring).
     """
-    return threshold_summary(scores, is_decoy, alpha)["threshold"]
+    return threshold_summary(scores, is_decoy, alpha, pseudocount=pseudocount)["threshold"]
 
 
-def q_values(scores, is_decoy):
-    """q-value-like column per hit: min over thresholds t <= score of D(>= t)/T(>= t)."""
+def q_values(scores, is_decoy, *, pseudocount: int = 0):
+    """q-value per hit: min over thresholds t <= score of (D(>= t) + pseudocount)/T(>= t)."""
     s = np.asarray(scores, dtype=float)
-    c = fdr_curve(s, is_decoy)
+    c = fdr_curve(s, is_decoy, pseudocount=pseudocount)
     if c.empty:
         return np.full(len(s), np.nan)
     thr = c.threshold.to_numpy()[::-1]  # ascending

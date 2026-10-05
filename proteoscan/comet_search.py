@@ -33,9 +33,46 @@ def _default_params() -> str:
         return (Path(tmp) / "comet.params.new").read_text()
 
 
+AA_NAMES = {"G": "glycine", "A": "alanine", "S": "serine", "P": "proline", "V": "valine", "T": "threonine",
+            "C": "cysteine", "L": "leucine", "I": "isoleucine", "N": "asparagine", "D": "aspartic_acid",
+            "Q": "glutamine", "K": "lysine", "E": "glutamic_acid", "M": "methionine", "H": "histidine",
+            "F": "phenylalanine", "U": "selenocysteine", "R": "arginine", "Y": "tyrosine", "W": "tryptophan",
+            "O": "pyrrolysine", "B": "user_amino_acid", "J": "user_amino_acid", "X": "user_amino_acid",
+            "Z": "user_amino_acid"}
+TERMINI = {"N-term": "add_Nterm_peptide", "C-term": "add_Cterm_peptide"}
+# Comet's unused variable-mod slot, as written by `comet -p`
+EMPTY_VARIABLE_MOD = "0.0 X 0 3 -1 0 0 0.0"
+
+
+def fixed_mod_deltas(cfg: SearchConfig) -> dict[str, float]:
+    """Effective fixed (static) modifications: residue letter, "N-term" or "C-term" -> mass delta.
+
+    This is what build_comet_params writes as add_* lines and what read_comet must make explicit
+    in ProForma (Comet's output omits static mods). Raises on a residue Comet has no add_ line for.
+    """
+    out: dict[str, float] = {}
+    for m in cfg.fixed_modifications:
+        keys = [m.residues] if m.residues in TERMINI else list(m.residues)
+        for k in keys:
+            if k not in AA_NAMES and k not in TERMINI:
+                raise ValueError(f"fixed modification {m.name!r}: residue {k!r} has no Comet static-mod parameter")
+            if k in out and abs(out[k] - m.delta) > 1e-9:
+                raise ValueError(f"two fixed modifications on {k!r} ({out[k]} and {m.delta})")
+            out[k] = float(m.delta)
+    return out
+
+
+def _static_param_key(key: str) -> str:
+    return TERMINI[key] if key in TERMINI else f"add_{key}_{AA_NAMES[key]}"
+
+
 def build_comet_params(cfg: SearchConfig, num_output_lines: int = 5, decoy_prefix: str = "DECOY_",
                        generate_decoys: bool = True) -> str:
     text = _default_params()
+    # `comet -p` ships non-zero defaults (add_C_cysteine = 57.021464, variable_mod01 = 15.9949 M):
+    # zero every static mod and every variable slot so that only the configured mods are searched
+    text = re.sub(r"^(add_\w+) = \S+", r"\1 = 0.0", text, flags=re.M)
+    text = re.sub(r"^(variable_mod\d\d) = .*$", rf"\1 = {EMPTY_VARIABLE_MOD}", text, flags=re.M)
     lo, hi = cfg.isotope_errors
     iso = {(0, 0): 0, (0, 1): 1, (0, 2): 2, (0, 3): 3, (-1, 3): 4, (-1, 1): 5, (-3, 3): 6}.get((lo, hi), 4)
     settings = {
@@ -72,14 +109,9 @@ def build_comet_params(cfg: SearchConfig, num_output_lines: int = 5, decoy_prefi
         residues_by_delta[m.delta] = residues_by_delta.get(m.delta, "") + m.residues
     for i, (delta, res) in enumerate(sorted(residues_by_delta.items()), start=1):
         settings[f"variable_mod{i:02d}"] = f"{delta:.6f} {res} 0 {cfg.max_variable_ptm_per_peptide} -1 0 0 0.0"
-    aa_names = {"C": "cysteine", "M": "methionine", "K": "lysine", "S": "serine", "T": "threonine", "Y": "tyrosine",
-                "N": "asparagine", "Q": "glutamine", "R": "arginine", "H": "histidine", "D": "aspartic_acid", "E": "glutamic_acid",
-                "G": "glycine", "A": "alanine", "V": "valine", "L": "leucine", "I": "isoleucine", "P": "proline", "F": "phenylalanine",
-                "W": "tryptophan"}
-    for m in cfg.fixed_modifications:
-        for r in m.residues:
-            if r in aa_names:
-                settings[f"add_{r}_{aa_names[r]}"] = m.delta
+    # fixed (static) mods: every add_* line was zeroed above, so only configured mods are applied
+    for key, delta in fixed_mod_deltas(cfg).items():
+        settings[_static_param_key(key)] = delta
     missing = []
     for k, v in settings.items():
         text, n = re.subn(rf"^{re.escape(k)} = .*$", f"{k} = {v}", text, flags=re.M)
@@ -116,6 +148,22 @@ def _proforma(modified_peptide: str) -> str:
     return s
 
 
+_NTERM_RE = re.compile(r"^\[([+-]?[\d.]+)\]-")
+_CTERM_RE = re.compile(r"-\[([+-]?[\d.]+)\]$")
+
+
+def _add_terminal(pep: str, which: str, delta: float) -> str:
+    """Add a fixed terminal delta to a ProForma-like peptide; an existing (variable) mod on the same
+    terminus is summed with it so the written mass stays correct."""
+    rx = _NTERM_RE if which == "N-term" else _CTERM_RE
+    m = rx.search(pep)
+    total = delta + (float(m.group(1)) if m else 0.0)
+    tag = f"[{total:+.4f}]"
+    if which == "N-term":
+        return (tag + "-" + pep[m.end():]) if m else (tag + "-" + pep)
+    return (pep[:m.start()] + "-" + tag) if m else (pep + "-" + tag)
+
+
 def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: str = "DECOY_",
                fixed_mods: dict[str, float] | None = None) -> pd.DataFrame:
     df = pd.read_csv(txt, sep="\t", skiprows=1)
@@ -142,9 +190,13 @@ def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: st
         "comet_ions_total": df["ions_total"].astype(int),
         "prev_aa": df["prev_aa"], "next_aa": df["next_aa"],
     })
-    # fixed mods are implicit in Comet output; make them explicit for ProForma / canonical forms
+    # fixed mods are implicit in Comet output; make them explicit for ProForma / canonical forms.
+    # Keys as returned by fixed_mod_deltas: residue letters, "N-term", "C-term".
     for res, delta in fixed_mods.items():
-        out["peptide_sage"] = out["peptide_sage"].str.replace(res, f"{res}[+{delta:.4f}]", regex=False)
+        if res in TERMINI:
+            out["peptide_sage"] = out["peptide_sage"].map(lambda p, r=res, d=delta: _add_terminal(p, r, d))
+        else:
+            out["peptide_sage"] = out["peptide_sage"].str.replace(res, f"{res}[+{delta:.4f}]", regex=False)
     out["is_decoy"] = out["proteins"].map(lambda p: all(x.startswith(decoy_prefix) for x in p.split(";")))
     out["exp_mz"] = (out["exp_mass"] + out["charge"] * PROTON) / out["charge"]
     diff = out["exp_mass"] - out["calc_mass"]

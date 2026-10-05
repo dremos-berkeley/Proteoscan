@@ -10,7 +10,7 @@ import argparse, json, logging, sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np, pandas as pd
-from proteoscan.comet_search import read_comet
+from proteoscan.comet_search import fixed_mod_deltas, read_comet
 from proteoscan.config import SearchConfig
 from proteoscan.export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
 from proteoscan.peaks_export import write_export
@@ -60,7 +60,7 @@ def main():
     logging.basicConfig(level=logging.WARNING)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     cfg = SearchConfig.from_yaml(a.config)
-    fixed = {r: m.delta for m in cfg.fixed_modifications for r in m.residues}
+    fixed = fixed_mod_deltas(cfg)
     t0 = time.time()
     if (out / "features.parquet").exists():
         feat = pd.read_parquet(out / "features.parquet")

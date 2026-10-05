@@ -362,7 +362,10 @@ def compute_features(df: pd.DataFrame, mzml: str | Path, ms2pip_model: str = "HC
     return out
 
 
-FEATURE_COLUMNS = SAGE_FEATURES + ["n_mods", "n_ox", "n_deam", "has_cys", "len_per_mc",
+# has_cys is still computed by sequence_features (old tables and saved models reindex on it) but is not
+# a rescoring feature: a residue-composition flag lets the model learn search-space artefacts (e.g. the
+# hidden static +57 on Cys fixed in 2026-10, docs/STATUS.md "Corrections") instead of match quality.
+FEATURE_COLUMNS = SAGE_FEATURES + ["n_mods", "n_ox", "n_deam", "len_per_mc",
                                    "len_per_mod", "abs_ppm", "log_scored_candidates",
                                    "ms2_corr", "ms2_cos", "ms2_frac_pred_found", "longest_b_obs", "longest_y_obs",
                                    "n_ions_obs", "residue_coverage", "delta_rt", "abs_delta_rt"]
