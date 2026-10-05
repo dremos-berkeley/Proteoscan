@@ -6,9 +6,11 @@ de novo-only spectra, PTM profile) and, on synthetic-peptide ground truth, match
 with its Deep Learning Boost in sensitivity and accuracy (docs/STATUS.md).
 
 Pipeline: ThermoRawFileParser -> MS1 feature detection and PEAKS-style precursor list -> Comet ->
-protein-restricted second pass -> rescoring with MS2PIP fragment-intensity, DeepLC retention-time,
-de novo agreement (fine-tuned Casanovo) and ion-series features -> PEAKS-style FDR filter -> protein
-inference -> exports and a self-contained HTML results viewer.
+protein-restricted second pass -> mokapot rescoring with MS2PIP fragment-intensity (including observed
+b/y ion-series coverage), DeepLC retention-time, sequence and protein-support features -> PEAKS-style
+FDR filter -> protein inference -> exports and a self-contained HTML results viewer. (De novo agreement
+from fine-tuned Casanovo and the extended ion features are used only for training score-imitation
+models, `scripts/train_score_model.py`, not by the pipeline.)
 
 Status: under construction. See `docs/ARCHITECTURE.md` for the stage design and
 `docs/PEAKS_EXPORT_FORMAT.md` for the export format we reproduce.

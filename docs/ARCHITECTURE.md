@@ -25,13 +25,19 @@ inspect the PEAKS binary.
 3. `denovo`    De novo sequencing per query (Casanovo or PEAKS-style tag graph) giving
                a full sequence, ALC, and per-residue local confidence. Provides the
                `denovoOnly` export and the "tag" features used by DB search rescoring.
-4. `search`    Database search with Sage (semi-tryptic, mods, wide isotope errors,
-               multiple candidates per query). Optionally tag-filtered candidate lists.
-5. `rescore`   Feature engineering per PSM: Sage scores, predicted fragment intensity
-               correlation (AlphaPeptDeep / MS2PIP, ion-trap models), predicted RT delta
-               (DeepLC), de novo agreement (tag length, CAA%), positional confidence.
-               A learned model (LightGBM / mokapot) trained to imitate PEAKS acceptance
-               and rank order; outputs a -10lgP-scaled score.
+4. `search`    Database search with Comet in the end-to-end pipeline (`proteoscan.pipeline`,
+               `comet_search.py`: semi-tryptic, mods, wide isotope errors, several candidates
+               per query, then a protein-restricted second pass). Sage is available only as
+               the standalone `proteoscan.cli search` command (`sage_search.py`).
+5. `rescore`   Feature engineering per PSM in the pipeline: Comet scores, predicted fragment
+               intensity correlation and observed b/y ion-series coverage from the predictor's
+               annotation (MS2PIP by default; AlphaPeptDeep ion-trap models opt-in), predicted
+               RT delta (DeepLC), sequence features and the second-pass protein-support feature;
+               mokapot (semi-supervised target/decoy, cross-validated scores) or a supplied
+               PEAKS-imitation model (`--mode imitate`); outputs a -10lgP-scaled score.
+               De novo agreement (tag length, CAA%) and the extended ion features of
+               `ion_features.py` are not used by the pipeline; they feed only the
+               score-imitation training in `scripts/train_score_model.py`.
 6. `fdr`       Decoy-fusion-style target/decoy FDR at PSM, peptide sequence and protein
                group level, thresholds chosen exactly the way PEAKS reports them
                (peptide -10lgP threshold at 1% peptide FDR; protein -10lgP >= 15 and

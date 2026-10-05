@@ -125,3 +125,43 @@ Means over 23 pools, each method at its own claimed 1% FDR:
 The boost adds about 4% true peptides on these clean synthetic spectra (82% of PSMs on the Jurkat
 lysate); Proteoscan's rescoring matches or exceeds the boosted result and exceeds the unboosted one
 by 2-6%. Full table: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.csv.
+
+## Corrections (2026-10-05, branch fix/comet-fixed-mods-score-tail-cv)
+Three problems found in the 261003_proteoscan_test replication (propionamide config) and fixed:
+- **P1, hidden static +57 on Cys (bug).** `build_comet_params` started from `comet -p` defaults
+  (`add_C_cysteine = 57.021464`, `variable_mod01 = 15.9949 M`) and never zeroed them. Configs without
+  explicit fixed CAM (`configs/peaks_propionamide.yml`) searched every Cys as C+57 plus the variable
+  CAM/propionamide stack (C+114 / C+128): propionamide and free Cys were unsearchable, exported
+  `C(+57.02)` / `C(+71.04)` were really +114 / +128, and mokapot learned negative `has_cys` weights.
+  Fixed: all `add_*` and variable slots are zeroed first; `fixed_mod_deltas`; a variable mod on a
+  fixed residue is refused. Fixed-CAM configs (facility, HeLa, ProteomeTools) were not affected:
+  their comet.params differ from before only in already-zero lines, and Comet output is identical.
+- **P2, -10lgP ceiling on small runs (design limit).** `minus10lgp` tied every target above the best
+  decoy at 10*log10(n_decoys+1), and the FDR threshold could rest on 0 decoys with no warning. Now
+  the decoy tail is extrapolated above the best decoy, and `run_stats.json` reports decoy counts at
+  the threshold, (D+1)/T, the decoy null size and ceiling, and `fdr_estimable` (>= 10 decoy
+  sequences at the threshold). README "Small defined mixtures".
+- **P3, in-sample rescoring scores (methodological).** `rescore_tda` scored every PSM with the mean
+  of mokapot's fold models, i.e. with models trained on it. It now uses mokapot's cross-validated
+  (held-out, per-fold calibrated) scores, checked against mokapot's own; adds `mokapot_q`.
+  `has_cys` is no longer a rescoring feature.
+
+Superseded by these corrections: the "Score imitation (2026-09-30)" table above and
+docs/DENOVO_FEATURES.md numbers (trained on propionamide candidates with the hidden +57; models
+`score_prop_v1`, `v1b_ions`, `v2` invalidated, models/README.md). The HeLa, Jurkat and
+ProteomeTools tables above were produced with the in-sample scores of P3.
+
+ProteomeTools regression with the corrections (same 23 pools, configs/peaks_facility_human.yml,
+full rerun, mokapot seed 0; /drive_a/drew/peaks-parity-work/fixcys_regress/SUMMARY_truth.{md,csv},
+before_after.csv). Means over pools, before -> after; per-pool up/down; seed noise (SD over three
+seeds of the 23-pool mean, iontrap_model/results/bench_seeds.csv) is 4.95 (HCD-IT) and 2.89 (CID-IT)
+true peptides at 1% FDP and about 0.02 percentage points of FDP.
+| scan type | PSMs | measured FDP | true peptides | true peptides at measured 1% FDP |
+|---|---|---|---|---|
+| HCD ion trap | 8,910 -> 8,851 | 1.14% -> 1.11% | 815 -> 818 (9 up / 10 down) | 707 -> 738 (median change 0; 11 up / 9 down) |
+| CID ion trap | 8,535 -> 8,365 | 1.13% -> 1.13% | 805 -> 801 (8 up / 11 down) | 728 -> 744 (median 0; 10 up / 10 down) |
+| HCD Orbitrap | 18,863 -> 16,741 | 0.90% -> 0.71% | 848 -> 808 (0 up / 23 down) | 748 -> 754 (median -23; 2 up / 20 down) |
+Ion-trap scan types: no regression (FDP unchanged or lower, true peptides within noise; the mean
+gain at 1% FDP comes from a few pools whose baseline list was truncated by an early false PSM).
+HCD Orbitrap: fewer PSMs and lower FDP, and fewer true peptides in every pool (mean -40). This is a
+sensitivity loss that has not been explained yet, and it blocks the merge until it is.
