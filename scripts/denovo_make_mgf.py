@@ -2,8 +2,8 @@
 
 Example (HeLa PXD004940 ion-trap runs; one whole run held out for validation):
 
-    python scripts/denovo_make_mgf.py --out /drive_a/drew/proteoscan-work/denovo_finetune/mgf \
-        --psms-root /drive_a/drew/proteoscan-work/hela --mzml-root /drive_a/drew/public-data/PXD004940/mzml \
+    python scripts/denovo_make_mgf.py --out /drive_a/drew/proteoscan-work/models/denovo_finetune/mgf \
+        --psms-root /drive_a/drew/proteoscan-work/benchmarks/hela --mzml-root /drive_a/drew/public-data/PXD004940/mzml \
         --pattern '*_HCD_IT_*' --valid 151118_Q_Hela_03_03_50cm_HCD_IT_EasySpray_90min_500ng
 
     # test set: PEAKS PSMs of another run, every PSM (no score filter, no peptide dedup)

@@ -31,9 +31,9 @@ from proteoscan.peaks_export import format_value, read_export  # noqa: E402
 from proteoscan.proteins import infer_proteins, read_mzid_psm_scores, read_protein_db  # noqa: E402
 
 REF = "/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT"
-FASTA = "/drive_a/drew/proteoscan-work/proteins/human_sp_peaks_merged.fasta"
+FASTA = "/drive_a/drew/proteoscan-work/analysis/proteins/human_sp_peaks_merged.fasta"
 LOCAL_FASTA = "/drive_a/drew/openms-data/260921-DrewR_Adam_91526/fasta/human_sp.fasta"
-OUT = "/drive_a/drew/proteoscan-work/proteins/eval"
+OUT = "/drive_a/drew/proteoscan-work/analysis/proteins/eval"
 
 
 def build_merged_fasta(ref_root, local_fasta, out_path):

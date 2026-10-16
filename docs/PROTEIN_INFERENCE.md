@@ -10,7 +10,7 @@ Harness: `python scripts/eval_proteins.py`. For each sample it feeds PEAKS's own
 and the full-precision PSM scores from `db.mzidentml_1_2_0.xml`. It then diffs the output
 against `db.proteins.csv` and `db.protein-peptides.csv`. Every field is compared as the exact
 string PEAKS would print. Results are written to
-`/drive_a/drew/proteoscan-work/proteins/eval/`. Reference tests are in `tests/test_proteins.py`
+`/drive_a/drew/proteoscan-work/analysis/proteins/eval/`. Reference tests are in `tests/test_proteins.py`
 and `tests/test_fdr.py`.
 
 ## Final agreement
@@ -41,7 +41,7 @@ protein has the same number of peptide rows (see "Group numbering").
 
 PEAKS's database, "Homo_sapiens" with 20597 entries, is an older UniProt release than the
 local `human_sp.fasta`, which has 20431 entries. For evaluation,
-`/drive_a/drew/proteoscan-work/proteins/human_sp_peaks_merged.fasta` is built by
+`/drive_a/drew/proteoscan-work/analysis/proteins/human_sp_peaks_merged.fasta` is built by
 `scripts/eval_proteins.py:build_merged_fasta`. It is the local FASTA with every entry
 replaced or added from the union of the four `db.proteins.fasta` files, which hold PEAKS's
 own headers and sequences for the reported proteins.

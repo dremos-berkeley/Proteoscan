@@ -62,7 +62,7 @@ because the extra PSMs are wrong. Two-pass entrapment validation: pending.
 | 03_01 1 ug | Orbitrap 0.02 Da | 30,958 | 27,543 | 3,992 | 32 |
 | 03_02 1 ug | Orbitrap 0.02 Da | 32,111 | 28,694 | 4,029 | 26 |
 | 03_03 1 ug | Orbitrap 0.02 Da | 32,145 | 28,633 | 4,024 | 38 |
-Exports under /drive_a/drew/peaks-parity-work/hela/<run>/export. PEAKS results for these runs are
+Exports under /drive_a/drew/proteoscan-work/benchmarks/hela/<run>/export. PEAKS results for these runs are
 pending on the Windows machine; they will be the training set for the score-imitation model.
 
 ## De novo (2026-09-30)
@@ -105,7 +105,7 @@ acquisition, excluded); "at 1%" = each method's own accepted list truncated at a
 | HCD Orbitrap | ours | 18,863 | 0.90% | 848 | 748 |
 | HCD Orbitrap | PEAKS | 18,049 | 0.94% | 841 | 781 |
 Conclusion: parity in sensitivity and accuracy with PEAKS + DL boost on synthetic ground truth.
-Full tables: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.{md,csv}; script
+Full tables: /drive_a/drew/proteoscan-work/benchmarks/proteometools/SUMMARY_truth.{md,csv}; script
 scripts/aggregate_proteometools.py.
 
 ## Ion-trap fragment-intensity model (2026-10-03, docs/IONTRAP_MODEL.md)
@@ -124,7 +124,7 @@ Means over 23 pools, each method at its own claimed 1% FDR:
 | HCD Orbitrap | 14,715 / 0.55% / 798 | 18,049 / 0.94% / 841 | 18,863 / 0.90% / 848 |
 The boost adds about 4% true peptides on these clean synthetic spectra (82% of PSMs on the Jurkat
 lysate); Proteoscan's rescoring matches or exceeds the boosted result and exceeds the unboosted one
-by 2-6%. Full table: /drive_a/drew/peaks-parity-work/proteometools/SUMMARY_truth.csv.
+by 2-6%. Full table: /drive_a/drew/proteoscan-work/benchmarks/proteometools/SUMMARY_truth.csv.
 
 ## Corrections (2026-10-05, branch fix/comet-fixed-mods-score-tail-cv)
 Three problems found in the 261003_proteoscan_test replication (propionamide config) and fixed:
@@ -153,7 +153,7 @@ ProteomeTools tables above were produced with the in-sample scores of P3.
 
 ProteomeTools regression with the corrections (same 23 pools, full rerun, mokapot seed 0; same
 configs as the baseline: configs/peaks_facility_human.yml for the ion-trap scan types,
-configs/peaks_hela_hcd_ft.yml (0.02 Da) for HCD Orbitrap; /drive_a/drew/peaks-parity-work/fixcys_regress/
+configs/peaks_hela_hcd_ft.yml (0.02 Da) for HCD Orbitrap; /drive_a/drew/proteoscan-work/fixcys_regress/
 SUMMARY_truth.{md,csv} and SUMMARY_truth_ot002.{md,csv}, before_after*.csv). Means over pools, before -> after;
 per-pool up / down. Noise: SD over three mokapot seeds of the 23-pool mean is 4.95 (HCD-IT) and 2.89 (CID-IT)
 true peptides at 1% FDP and about 0.02 percentage points of FDP (iontrap_model/results/bench_seeds.csv); for HCD
@@ -173,7 +173,7 @@ finding below); the medians are 0.
 An earlier version of this regression searched HCD Orbitrap with the facility config (0.5 Da, low-res
 binning) instead of the baseline's 0.02 Da config and showed 848 -> 808 true peptides. That was the
 configuration change, not the corrections: a rescoring-only ablation on cached candidate tables
-(no re-search; 23 pools x 3 mokapot seeds; /drive_a/drew/peaks-parity-work/ot_ablation/arm_table.csv)
+(no re-search; 23 pools x 3 mokapot seeds; /drive_a/drew/proteoscan-work/ot_ablation/arm_table.csv)
 gives, as true peptides (SD over seeds) / measured FDP:
 | candidates | master scoring (in-sample, with has_cys) | in-sample, no has_cys | cross-validated, with has_cys | cross-validated, no has_cys (branch) |
 |---|---|---|---|---|

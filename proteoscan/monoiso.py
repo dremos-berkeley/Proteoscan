@@ -6,7 +6,7 @@ DOWN by k * 1.00335/z (k = 0..-4) when the isotope pattern says the target is no
 monoisotopic peak; it never moves up.  The rule below was fitted to PEAKS's exported
 PEPMASS values (never to its binary) and reproduces PEAKS's k for ~91% of S4 and ~83% of
 S1 featureless entries; see scripts/eval_monoiso.py and
-/drive_a/drew/peaks-parity-work/monoiso_eval/REPORT.md.
+/drive_a/drew/proteoscan-work/analysis/monoiso_eval/REPORT.md.
 
 1. Anchor: the centroid nearest the target within ``tol_ppm``.
 2. Isotope ladder: for positions j = -max_shift-1 .. +4, the centroid nearest

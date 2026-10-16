@@ -4,8 +4,8 @@
 #   scripts/iontrap_prepare.sh <pool list file> <lane> <nlanes>
 # Waits for each raw file to finish downloading (no .part left).
 source /home/drew/miniforge3/etc/profile.d/conda.sh; conda activate peaksparity
-cd /home/drew/code/peaks-parity
-RAW=/drive_a/drew/public-data/PXD004732/raw_train; W=/drive_a/drew/peaks-parity-work/iontrap_model
+cd /home/drew/code/proteoscan
+RAW=/drive_a/drew/public-data/PXD004732/raw_train; W=/drive_a/drew/proteoscan-work/models/iontrap_model
 BENCH=/drive_a/drew/public-data/PXD004732/pools.txt
 LIST=$1; LANE=${2:-0}; NLANES=${3:-1}; i=0
 for pool in $(cat $LIST); do

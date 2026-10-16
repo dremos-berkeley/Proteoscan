@@ -18,7 +18,7 @@ variable_modifications:
 - name: Propionamide
   residues: C
 max_variable_ptm_per_peptide: 3
-database: /drive_a/drew/peaks-parity-work/fasta/human_sp_peaks_merged.fasta
+database: /drive_a/drew/proteoscan-work/resources/fasta/human_sp_peaks_merged.fasta
 deep_learning_boost: true
 fdr_estimation: true
 confident_amino_acid_threshold_pct: 2.0

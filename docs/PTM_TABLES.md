@@ -197,7 +197,7 @@ Notes on the site columns:
 
 - **Positions use `Start`, which is the first valid occurrence** (docs/PROTEIN_INFERENCE.md).
   Counting every occurrence of the peptide in the merged FASTA
-  (`/drive_a/drew/proteoscan-work/fasta/human_sp_peaks_merged.fasta`) overcounts:
+  (`/drive_a/drew/proteoscan-work/resources/fasta/human_sp_peaks_merged.fasta`) overcounts:
   - sample 1 Deamidation: 15 vs 5 (the UBC/UBB repeats);
   - sample 2 Deamidation: 80 vs 40;
   - sample 4 Oxidation: 583 vs 582.
@@ -251,4 +251,4 @@ modified = build_modified_peptides(psms_tbl, peptides_tbl, proteins_tbl, protein
     key (Scan, m/z, z, Peptide).
   - This matches 100 % of mzIdentML items. PSMs below the peptide threshold have no item and
     get NaN, but they never tie with the best PSM.
-  - The test caches the join in `/drive_a/drew/proteoscan-work/ptm_tables/cache/`.
+  - The test caches the join in `/drive_a/drew/proteoscan-work/analysis/ptm_tables/cache/`.

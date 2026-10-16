@@ -313,7 +313,7 @@ def main(argv=None) -> None:
     ap.add_argument("--mzml", required=True)
     ap.add_argument("--ms2", help="ms2_features.parquet (default: next to --features)")
     ap.add_argument("--mgf", help="PEAKS MGF export of the same run")
-    ap.add_argument("--cache", default="/drive_a/drew/proteoscan-work/features/cache")
+    ap.add_argument("--cache", default="/drive_a/drew/proteoscan-work/analysis/features/cache")
     ap.add_argument("--out")
     ap.add_argument("--label", default="")
     ap.add_argument("--ppm", type=float, default=10.0)

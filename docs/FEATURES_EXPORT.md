@@ -65,7 +65,7 @@ Accession) for when we do.
 ## Jurkat (sample 4) concordance
 
 Run: the cached `pipeline_jurkat` intermediates, re-run through rescoring and export into
-`/drive_a/drew/proteoscan-work/pipeline_jurkat_features/`. Mokapot rescoring is not
+`/drive_a/drew/proteoscan-work/benchmarks/pipeline_jurkat_features/`. Mokapot rescoring is not
 bit-reproducible, so this run has 15,427 PSM rows against 15,398 in the earlier run. Numbers
 are in `feature_concordance.json` and `concordance_features/`.
 

@@ -1,9 +1,9 @@
 """Re-score cached pipeline runs with a different fragment-intensity predictor and measure the effect
 on ground-truth identification (ProteomeTools pools) - docs/IONTRAP_MODEL.md.
 
-    python scripts/iontrap_benchmark.py --pools pools.txt --source-root /drive_a/drew/peaks-parity-work/proteometools \
+    python scripts/iontrap_benchmark.py --pools pools.txt --source-root /drive_a/drew/proteoscan-work/benchmarks/proteometools \
         --variant ms2pip=cached --variant ft=peptdeep:hcd=models/hcd.pth,cid=models/cid.pth \
-        --out-root /drive_a/drew/peaks-parity-work/iontrap_model/bench --summary bench_summary.csv
+        --out-root /drive_a/drew/proteoscan-work/models/iontrap_model/bench --summary bench_summary.csv
 
 For every run <source-root>/<raw stem>/<type> (type in hcd_it, cid_it) with a cached
 candidates_features_2pass.parquet: no re-search. The candidate table is copied, its fragment columns
@@ -123,7 +123,7 @@ def jobs_for(pools: list[str], source_root: Path, out_root: Path, variants: dict
                     continue
                 mz = [p for p in (run / "split").glob(f"*.{t}.mzML")] if (run / "split").is_dir() else []
                 if not mz:  # validation runs keep the split mzMLs next to the raw conversion
-                    mz = list(Path("/drive_a/drew/peaks-parity-work/iontrap_model/runs", run.name, "split").glob(f"*.{t}.mzML"))
+                    mz = list(Path("/drive_a/drew/proteoscan-work/models/iontrap_model/runs", run.name, "split").glob(f"*.{t}.mzML"))
                 for v, spec in variants.items():
                     for sd in seeds:
                         vd = v if sd == 0 else f"{v}_seed{sd}"

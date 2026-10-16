@@ -83,7 +83,7 @@ monoisotopic assignment) worth its own look.
   first epoch output head only with linear warm-up, cosine decay over 30 epochs, early stopping
   (patience 4) on the median spectral angle of the validation pools (averaged with the held-out HeLa
   peptides for the mixed model). Seed 0. About 5 s per epoch on one A6000.
-- Checkpoints (not in git): /drive_a/drew/peaks-parity-work/iontrap_model/models/
+- Checkpoints (not in git): /drive_a/drew/proteoscan-work/models/iontrap_model/models/
   | model | training data | spectra | best epoch | val median SA (b/y 1+) |
   |---|---|---|---|---|
   | hcd_it_pt.pth | ProteomeTools HCD-IT | 57,589 | 30 of 30 | 0.934 |
@@ -182,7 +182,7 @@ cached STATUS.md run (15,398 PSMs, recall 0.790) by mokapot run-to-run variation
   proteoscan/rescore_features.py (peptdeep_correlations, SpectrumStore scan info), proteoscan/pipeline.py
   (`--fragment-model`), scripts/iontrap_{label,label_check,dataset,train,eval_predictor,benchmark,jurkat}.py,
   scripts/iontrap_{prepare,val_pipeline,build_pt}.sh.
-- Work directory /drive_a/drew/peaks-parity-work/iontrap_model: runs/ (converted, split, labelled
+- Work directory /drive_a/drew/proteoscan-work/models/iontrap_model: runs/ (converted, split, labelled
   training pools), data/ and test_data/ (fragment tables), models/, val_pipeline/ (pipeline runs of the
   validation pools), val_bench/, bench/, jurkat_bench/ (rescored exports per variant and seed),
   results/ (label_check_*.csv, predictor/*.csv with per-spectrum parquet files, val_bench.csv,

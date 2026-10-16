@@ -4,8 +4,8 @@
 # fragment-model checkpoint / feature variant without touching the benchmark pools.
 #   scripts/iontrap_val_pipeline.sh <pool list> [gpu]
 source /home/drew/miniforge3/etc/profile.d/conda.sh; conda activate peaksparity
-cd /home/drew/code/peaks-parity
-W=/drive_a/drew/peaks-parity-work/iontrap_model; BENCH=/drive_a/drew/public-data/PXD004732/pools.txt
+cd /home/drew/code/proteoscan
+W=/drive_a/drew/proteoscan-work/models/iontrap_model; BENCH=/drive_a/drew/public-data/PXD004732/pools.txt
 LIST=$1; GPU=${2:-3}
 for pool in $(cat $LIST); do
   if grep -qx "$pool" $BENCH; then echo "REFUSE benchmark pool $pool"; continue; fi

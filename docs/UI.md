@@ -32,12 +32,12 @@ Example reports (Jurkat sample 4):
 ```bash
 MZ=/drive_a/drew/openms-data/260921-DrewR_Adam_91526/mzml/DrewR_Adam_91526_DDA_OT_4.mzML
 REF="/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT/Analysis 1 - Sample 4"
-FA=/drive_a/drew/proteoscan-work/fasta/human_sp_peaks_merged.fasta
+FA=/drive_a/drew/proteoscan-work/resources/fasta/human_sp_peaks_merged.fasta
 python -m proteoscan.ui --export "$REF" --mzml $MZ --fasta $FA \
-    --out /drive_a/drew/proteoscan-work/ui/report_peaks_ref.html          # 12.3 MB, 3398 spectra, ~25 s
-python -m proteoscan.ui --export /drive_a/drew/proteoscan-work/exp_peaksfeat/export_tda \
+    --out /drive_a/drew/proteoscan-work/reports/ui/report_peaks_ref.html          # 12.3 MB, 3398 spectra, ~25 s
+python -m proteoscan.ui --export /drive_a/drew/proteoscan-work/benchmarks/exp_peaksfeat/export_tda \
     --mzml $MZ --fasta $FA --ref "$REF" \
-    --out /drive_a/drew/proteoscan-work/ui/report_pipeline.html           # 19.7 MB, 4882 spectra, ~30 s
+    --out /drive_a/drew/proteoscan-work/reports/ui/report_pipeline.html           # 19.7 MB, 4882 spectra, ~30 s
 ```
 
 Most of the build time goes into opening the 3 GB mzML index (about 20 s). Peak memory is
@@ -245,8 +245,8 @@ PNGs. Old `spec_*`/`cov_*` images in `img/` are deleted before redrawing.
 ## Jurkat sample 4 results
 
 Inputs:
-* Pipeline: `/drive_a/drew/peaks-parity-work/pipeline_jurkat_features/export`, written to
-  `/drive_a/drew/peaks-parity-work/summary_html/jurkat/`.
+* Pipeline: `/drive_a/drew/proteoscan-work/benchmarks/pipeline_jurkat_features/export`, written to
+  `/drive_a/drew/proteoscan-work/reports/summary_html/jurkat/`.
 * PEAKS reference: written to `.../summary_html/peaks_ref/`.
 
 | | pipeline | PEAKS reference export |

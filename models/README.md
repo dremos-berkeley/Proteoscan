@@ -9,7 +9,7 @@ The pipeline's default scoring is mokapot's semi-supervised target-decoy rescori
   `proteoscan run --mode imitate --model models/imitation_jurkat_v1.pkl`. It has seen only one
   run; retrain when PEAKS exports for the HeLa runs exist.
 - `casanovo_iontrap_hcd_ft5runs_step15000.ckpt` (not tracked in git, 400+ MB; copy from
-  /drive_a/drew/proteoscan-work/denovo_finetune/models/): Casanovo 5.2 fine-tuned on 197k
+  /drive_a/drew/proteoscan-work/models/denovo_finetune/models/): Casanovo 5.2 fine-tuned on 197k
   ion-trap HCD PSMs from the HeLa runs. Held-out HeLa run: 42% full-sequence accuracy (I=L) vs 17%
   for the released model; Jurkat (turbo-scan acquisition): 20% vs 18% with 5 beams and
   precursor-consistent candidate selection. See docs/DENOVO.md.

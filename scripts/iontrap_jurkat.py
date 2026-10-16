@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.iontrap_benchmark import run_one  # noqa: E402
 
-SRC = "/drive_a/drew/peaks-parity-work/pipeline_jurkat"
+SRC = "/drive_a/drew/proteoscan-work/benchmarks/pipeline_jurkat"
 MZML = "/drive_a/drew/openms-data/260921-DrewR_Adam_91526/mzml/DrewR_Adam_91526_DDA_OT_4.mzML"
 REF = "/drive_a/drew/vendor-exports/DrewR_Adam_91526_DDA_OT/Analysis 1 - Sample 4"
 
