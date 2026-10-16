@@ -34,6 +34,11 @@ def cmd_ui(a, rest):
     ui_main(rest)
 
 
+def cmd_summary(a, rest):
+    from .summary import main as summary_main
+    return summary_main(rest)
+
+
 def cmd_run(a, rest):
     from .pipeline import main as pipeline_main
     pipeline_main(rest)
@@ -47,11 +52,14 @@ def main(argv=None):
     k = sub.add_parser("concordance", help="compare an export dir to a PEAKS reference"); k.add_argument("--ref", required=True); k.add_argument("--test", required=True); k.add_argument("--out", required=True); k.set_defaults(fn=cmd_concordance)
     r = sub.add_parser("run", help="end-to-end pipeline, mzML/raw -> PEAKS-format export (options: proteoscan run -h)", add_help=False); r.set_defaults(fn=None)
     u = sub.add_parser("ui", help="self-contained HTML results viewer (options: python -m proteoscan.ui -h)", add_help=False); u.set_defaults(fn=None)
+    m = sub.add_parser("summary", help="PEAKS-style HTML export pages: db.summary/proteins/peptides.html + img/ (options: python -m proteoscan.summary -h)", add_help=False); m.set_defaults(fn=None)
     a, rest = p.parse_known_args(argv)
     if a.cmd == "run":
         return cmd_run(a, rest)
     if a.cmd == "ui":
         return cmd_ui(a, rest)
+    if a.cmd == "summary":
+        return cmd_summary(a, rest)
     if rest:
         p.error("unrecognized arguments: " + " ".join(rest))
     a.fn(a)

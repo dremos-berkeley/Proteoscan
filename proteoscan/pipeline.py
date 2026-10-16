@@ -224,8 +224,12 @@ def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
 def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", model_path: str | None = None,
         sample_name: str = "Sample 1", processes: int = 8, ref: str | None = None,
         features_path: str | None = None, candidates_per_spectrum: int = 3, two_pass: bool = True,
-        fragment_model: str = "HCD2021") -> dict:
+        fragment_model: str = "HCD2021", summary: bool = True) -> dict:
     out.mkdir(parents=True, exist_ok=True)
+    try:  # lets `proteoscan.summary` find the search parameters of this run later
+        cfg.to_yaml(out / "search_config.yml")
+    except Exception as e:
+        log.warning("search_config.yml not written: %s", e)
     t0 = time.time()
     stats: dict = {}
     fixed = fixed_mod_deltas(cfg)
@@ -301,6 +305,16 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
                  n_protein_groups=int(proteins_tbl["Protein Group"].nunique()), export_dir=str(export_dir),
                  elapsed_s=time.time() - t0)
     (out / "run_stats.json").write_text(json.dumps(stats, indent=2))
+    if summary:
+        try:  # PEAKS-style HTML pages (db.summary.html, db.proteins.html, db.peptides.html, img/)
+            from .summary import build_summary
+            info = build_summary(str(export_dir), str(export_dir), mzml=[str(m) for m in mzmls],
+                                 fasta=cfg.database or None, psms_scored=str(out / "psms_scored.parquet"),
+                                 run_dir=str(out), config=cfg, processes=max(1, min(8, processes)),
+                                 features=[features_path] if features_path and features_path != "none" else None)
+            log.info("summary pages written to %s (%.1f MB)", export_dir, sum(info["bytes"].values()) / 1e6)
+        except Exception as e:  # secondary output; never fail the run for it
+            log.warning("summary pages skipped: %s", e)
     if ref:
         from .concordance import main as conc_main
         conc_main(["--ref", ref, "--test", str(export_dir), "--out", str(out / "concordance")])
@@ -320,6 +334,7 @@ def main(argv=None):
     ap.add_argument("--candidates", type=int, default=3, help="candidates kept per spectrum")
     ap.add_argument("--ref", help="PEAKS export dir to compare against")
     ap.add_argument("--single-pass", action="store_true", help="skip the protein-restricted second pass")
+    ap.add_argument("--no-summary", action="store_true", help="do not write the PEAKS-style HTML pages")
     ap.add_argument("--fragment-model", default="HCD2021",
                     help="fragment-intensity predictor: an MS2PIP model name, or peptdeep:<ckpt> / "
                          "peptdeep:hcd=<ckpt>,cid=<ckpt> (docs/IONTRAP_MODEL.md)")
@@ -327,7 +342,8 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = SearchConfig.from_yaml(a.config)
     stats = run(cfg, [Path(m) for m in a.input], Path(a.out), a.mode, a.model, a.sample_name, a.processes,
-                a.ref, a.features, a.candidates, two_pass=not a.single_pass, fragment_model=a.fragment_model)
+                a.ref, a.features, a.candidates, two_pass=not a.single_pass, fragment_model=a.fragment_model,
+                summary=not a.no_summary)
     print(json.dumps(stats, indent=2))
 
 
