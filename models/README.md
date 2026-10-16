@@ -1,5 +1,7 @@
 # Trained models
 
+The pipeline's default scoring is mokapot's semi-supervised target-decoy rescoring, learned from each run's own decoys; it uses none of the models below. The PEAKS-trained models are a legacy option (`--mode imitate`) from the project's original goal of reproducing PEAKS's PSM lists; they are not used in any accuracy result.
+
 - `imitation_jurkat_v1.pkl`: LightGBM classifier predicting whether PEAKS Studio (DL boost on)
   reports a candidate PSM, trained on DrewR_Adam_91526_DDA_OT_4 (Jurkat, ion-trap HCD) with
   the two-pass feature set. Cross-validated on that run: at p >= 0.5 it reproduces 56% of PEAKS's
