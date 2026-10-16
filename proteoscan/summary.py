@@ -1567,8 +1567,8 @@ def _summary_page(exp, samples, stats, stat_src, filters, pep_thr, t3, mc, figs,
     for key, sub, alt in (("score_histogram", "(a)", "score histogram"), ("score_vs_ppm", "(b)", "score vs ppm")):
         if key in figs:
             f2.append(f'<div><div class="sub">{sub}</div>{_img(figs[key], alt, 400)}</div>')
-    out.append(_fig_section(2, "Score distribution. <b>(a)</b> Distribution of PEAKS peptide score; <b>(b)</b> "
-                               "Scatterplot of PEAKS peptide score versus precursor mass error.",
+    out.append(_fig_section(2, "Score distribution. <b>(a)</b> Distribution of peptide score (-10lgP); <b>(b)</b> "
+                               "Scatterplot of peptide score versus precursor mass error.",
                             f'<div class="figrow">{"".join(f2)}</div>' if f2 else '<div class="na">No PSMs.</div>',
                             None if sc is not None else "Exported (target) PSMs only; no decoys available."))
     out.append('<div class="section"><div class="caption"><b>Table 1.</b> Statistics of data.</div>'
