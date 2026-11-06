@@ -149,6 +149,18 @@ def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, m
     return pd.DataFrame(entries)
 
 
+def apply_precursor_offset(entries: pd.DataFrame, ppm: float) -> pd.DataFrame:
+    """Recalibrate precursor entries for the search: m/z / (1 + ppm * 1e-6), ppm = the measured error
+    (observed - calculated, e.g. +11 when masses read high). The raw value is kept as mz_uncal; MS1
+    features and every MS1/MS2 matching tolerance stay on the raw, mutually consistent m/z."""
+    if not ppm:
+        return entries
+    entries = entries.copy()
+    entries["mz_uncal"] = entries["mz"]
+    entries["mz"] = entries["mz"] / (1.0 + float(ppm) * 1e-6)
+    return entries
+
+
 def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: str | Path,
                         remove_precursor_region: bool = True, region_da: float = 0.5,
                         keep_ms1: bool = False) -> pd.DataFrame:

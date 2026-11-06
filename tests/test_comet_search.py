@@ -143,3 +143,87 @@ def test_real_comet_has_every_key():
     assert keys <= set(real)
     text = cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=PROP_VARIABLE))
     assert all(float(v) == 0.0 for k, v in _params(text).items() if k.startswith("add_"))
+
+
+# --- terminal variable mods, Met clipping, precursor offset (branch feat/comet-terminal-mods-precursor-offset) ---
+
+def _var_lines(text):
+    p = _params(text)
+    return [v for k, v in sorted(p.items()) if k.startswith("variable_mod") and not v.startswith("0.0 X")]
+
+
+BASE_VARIABLE = [Modification("Carbamidomethylation", "C"), Modification("Propionamide", "C"),
+                 Modification("Oxidation", "M")]
+
+
+def test_anywhere_mods_unchanged_lines(template):
+    text = cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=BASE_VARIABLE))
+    assert _var_lines(text) == ["15.994915 M 0 3 -1 0 0 0.0", "57.021464 C 0 3 -1 0 0 0.0",
+                                "71.037114 C 0 3 -1 0 0 0.0"]
+    assert _params(text)["clip_nterm_methionine"] == "0"
+
+
+def test_protein_nterm_acetyl_and_clipping(template):
+    mods = BASE_VARIABLE + [Modification("Acetylation", "N-term", position="protein_nterm")]
+    text = cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=mods,
+                                      clip_nterm_methionine=True))
+    assert "42.010565 n 0 3 0 0 0 0.0" in _var_lines(text)
+    assert len(_var_lines(text)) == 4
+    assert _params(text)["clip_nterm_methionine"] == "1"
+
+
+def test_same_delta_residue_and_peptide_nterm_are_separate_lines(template):
+    mods = BASE_VARIABLE + [Modification("Carbamidomethylation", "K"), Modification("Carbamidomethylation", "H"),
+                            Modification("Carbamidomethylation", "N-term", position="peptide_nterm"),
+                            Modification("Propionamide", "K"),
+                            Modification("Propionamide", "N-term", position="peptide_nterm")]
+    lines = _var_lines(cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=mods)))
+    assert lines == ["15.994915 M 0 3 -1 0 0 0.0", "57.021464 CKH 0 3 -1 0 0 0.0", "57.021464 n 0 3 0 2 0 0.0",
+                     "71.037114 CK 0 3 -1 0 0 0.0", "71.037114 n 0 3 0 2 0 0.0"]
+
+
+def test_nterm_anywhere_defaults_to_peptide_nterm(template):
+    mods = [Modification("Acetylation", "N-term")]
+    assert _var_lines(cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=mods))) == \
+        ["42.010565 n 0 3 0 2 0 0.0"]
+
+
+def test_invalid_position_raises():
+    with pytest.raises(ValueError):
+        Modification("Acetylation", "N-term", position="protein_cterm")
+
+
+def test_too_many_variable_mod_lines_raises(template):
+    mods = [Modification(f"m{i}", "K", delta=1.0 + i) for i in range(16)]
+    with pytest.raises(ValueError):
+        cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=mods))
+
+
+def test_read_comet_variable_nterm_mod(tmp_path):
+    cols = ["scan", "num", "charge", "exp_neutral_mass", "calc_neutral_mass", "e-value", "xcorr", "delta_cn",
+            "sp_score", "ions_matched", "ions_total", "plain_peptide", "modified_peptide", "prev_aa", "next_aa",
+            "protein", "retention_time_sec", "sp_rank"]
+    row = [12, 1, 2, 1000.0, 1000.0, 1e-5, 3.0, 0.2, 500, 10, 20, "MEPTIDEK", "-.n[42.0106]MEPTIDEK.L", "-", "L",
+           "sp|P3|Z", 600, 1]
+    p = tmp_path / "n.txt"
+    p.write_text("CometVersion 2026.01\n" + "\t".join(cols) + "\n" + "\t".join(map(str, row)) + "\n")
+    assert cs.read_comet(p)["peptide_sage"].tolist() == ["[+42.0106]-MEPTIDEK"]
+
+
+def test_precursor_offset():
+    from proteoscan.precursors import apply_precursor_offset
+    e = pd.DataFrame({"mz": [1000.0, 500.0]})
+    out = apply_precursor_offset(e, 11.0)
+    assert out["mz"].iloc[0] == pytest.approx(1000.0 / (1 + 11e-6), abs=1e-9)
+    assert out["mz"].iloc[0] == pytest.approx(999.989000121, abs=1e-8)
+    assert out["mz_uncal"].tolist() == [1000.0, 500.0]
+    same = apply_precursor_offset(e, 0.0)
+    assert same["mz"].tolist() == [1000.0, 500.0] and "mz_uncal" not in same
+
+
+def test_offset_and_clip_config_roundtrip(tmp_path):
+    cfg = _cfg(fixed_modifications=[], variable_modifications=BASE_VARIABLE, clip_nterm_methionine=True,
+               precursor_mass_offset_ppm=11.05)
+    cfg.to_yaml(tmp_path / "c.yml")
+    back = SearchConfig.from_yaml(tmp_path / "c.yml")
+    assert back.precursor_mass_offset_ppm == 11.05 and back.clip_nterm_methionine is True
