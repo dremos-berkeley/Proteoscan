@@ -177,7 +177,7 @@ def _add_terminal(pep: str, which: str, delta: float) -> str:
 
 
 def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: str = "DECOY_",
-               fixed_mods: dict[str, float] | None = None) -> pd.DataFrame:
+               fixed_mods: dict[str, float] | None = None, clipped_met_enzymatic: bool = False) -> pd.DataFrame:
     df = pd.read_csv(txt, sep="\t", skiprows=1)
     fixed_mods = fixed_mods or {}
     src = source_file or Path(txt).stem
@@ -217,6 +217,8 @@ def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: st
     out["peptide_len"] = out["stripped"].str.len()
     out["missed_cleavages"] = out["stripped"].str[:-1].str.count(r"[KR](?!P)")
     nterm_ok = out["prev_aa"].isin(["K", "R", "-"]) & ~out["stripped"].str.startswith("P")
+    if clipped_met_enzymatic:  # fully specific search with clip_nterm_methionine: prev_aa M = initiator Met removed
+        nterm_ok |= out["prev_aa"] == "M"
     cterm_ok = out["stripped"].str[-1].isin(["K", "R"]) | (out["next_aa"] == "-")
     out["semi_enzymatic"] = (~(nterm_ok & cterm_ok)).astype(int)
     out["matched_intensity_pct"] = np.nan

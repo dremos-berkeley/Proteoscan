@@ -227,3 +227,21 @@ def test_offset_and_clip_config_roundtrip(tmp_path):
     cfg.to_yaml(tmp_path / "c.yml")
     back = SearchConfig.from_yaml(tmp_path / "c.yml")
     assert back.precursor_mass_offset_ppm == 11.05 and back.clip_nterm_methionine is True
+
+
+def test_read_comet_clipped_met_is_enzymatic(tmp_path):
+    cols = ["scan", "num", "charge", "exp_neutral_mass", "calc_neutral_mass", "e-value", "xcorr", "delta_cn",
+            "sp_score", "ions_matched", "ions_total", "plain_peptide", "modified_peptide", "prev_aa", "next_aa",
+            "protein", "retention_time_sec", "sp_rank"]
+    row = [13, 1, 2, 1000.0, 1000.0, 1e-5, 3.0, 0.2, 500, 10, 20, "AEGDEAAR", "M.n[42.0106]AEGDEAAR.G", "M", "G",
+           "sp|Q8NHH9|ATLA2_HUMAN", 600, 1]  # Comet 2026.01 output for a Met-clipped protein N-term peptide
+    p = tmp_path / "m.txt"
+    p.write_text("CometVersion 2026.01\n" + "\t".join(cols) + "\n" + "\t".join(map(str, row)) + "\n")
+    assert cs.read_comet(p)["semi_enzymatic"].tolist() == [1]
+    df = cs.read_comet(p, clipped_met_enzymatic=True)
+    assert df["semi_enzymatic"].tolist() == [0]
+    assert df["peptide_sage"].tolist() == ["[+42.0106]-AEGDEAAR"]
+    from proteoscan.pipeline import _clipped_met_enzymatic
+    assert _clipped_met_enzymatic(_cfg(clip_nterm_methionine=True, digest_mode="Specific"))
+    assert not _clipped_met_enzymatic(_cfg(clip_nterm_methionine=True, digest_mode="Semi-Specific"))
+    assert not _clipped_met_enzymatic(_cfg(clip_nterm_methionine=False, digest_mode="Specific"))
