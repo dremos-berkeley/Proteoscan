@@ -164,6 +164,28 @@ def apply_precursor_offset(entries: pd.DataFrame, ppm: float) -> pd.DataFrame:
     return entries
 
 
+def _scale_trailer_mono(spec: oms.MSSpectrum, factor: float) -> None:
+    """Multiply the Thermo trailer monoisotopic m/z by factor wherever it is stored: OpenMS keeps the mzML <scan>
+    userParam on the spectrum's Acquisition (getAcquisitionInfo()[i]); a spectrum-level meta value is handled too."""
+    if spec.metaValueExists(TRAILER_MONO):
+        spec.setMetaValue(TRAILER_MONO, float(spec.getMetaValue(TRAILER_MONO)) * factor)
+    ai = spec.getAcquisitionInfo()  # a copy: rebuild and set back
+    if not any(ai[i].metaValueExists(TRAILER_MONO) for i in range(ai.size())):
+        return
+    new = oms.AcquisitionInfo()
+    new.setMethodOfCombination(ai.getMethodOfCombination())
+    keys: list = []
+    ai.getKeys(keys)  # pyopenms fills the list
+    for k in keys:
+        new.setMetaValue(k, ai.getMetaValue(k))
+    for i in range(ai.size()):
+        a = ai[i]
+        if a.metaValueExists(TRAILER_MONO):
+            a.setMetaValue(TRAILER_MONO, float(a.getMetaValue(TRAILER_MONO)) * factor)
+        new.push_back(a)
+    spec.setAcquisitionInfo(new)
+
+
 def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: str | Path,
                         remove_precursor_region: bool = True, region_da: float = 0.5,
                         keep_ms1: bool = False, precursor_offset_ppm: float = 0.0) -> pd.DataFrame:
@@ -196,8 +218,8 @@ def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: 
             c.setNativeID(f"controllerType=0 controllerNumber=1 scan={int(e.query_id)}")
             # Comet takes the precursor m/z from this Thermo trailer value when present (not from the selected
             # ion set above), so a precursor recalibration must also be applied to it
-            if precursor_offset_ppm and c.metaValueExists(TRAILER_MONO):
-                c.setMetaValue(TRAILER_MONO, float(c.getMetaValue(TRAILER_MONO)) / (1.0 + precursor_offset_ppm * 1e-6))
+            if precursor_offset_ppm:
+                _scale_trailer_mono(c, 1.0 / (1.0 + precursor_offset_ppm * 1e-6))
             if remove_precursor_region:
                 keep = np.abs(mzs0 - float(e.mz)) > region_da + 0.7
                 c.set_peaks((mzs0[keep], ints0[keep]))

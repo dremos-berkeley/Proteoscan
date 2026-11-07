@@ -257,7 +257,11 @@ def _ms2_experiment():
     p = oms.Precursor(); p.setMZ(500.25); p.setCharge(2)
     s.setPrecursors([p])
     s.set_peaks(([200.0, 300.0, 400.0], [10.0, 20.0, 30.0]))
-    s.setMetaValue("[Thermo Trailer Extra]Monoisotopic M/Z:", 500.25)
+    # as ThermoRawFileParser mzML loads in OpenMS: the trailer userParam sits on the scan (Acquisition)
+    acq = oms.Acquisition(); acq.setIdentifier("1")
+    acq.setMetaValue("[Thermo Trailer Extra]Monoisotopic M/Z:", 500.25)
+    ai = oms.AcquisitionInfo(); ai.setMethodOfCombination("no combination"); ai.push_back(acq)
+    s.setAcquisitionInfo(ai)
     exp.addSpectrum(s)
     return exp
 
@@ -274,5 +278,7 @@ def test_expanded_mzml_trailer_mono_recalibrated(tmp_path, ppm):
     assert back.getNrSpectra() == 2
     f = 1.0 + ppm * 1e-6
     for spec, mz in zip(back, [500.25, 500.75]):
-        assert float(spec.getMetaValue(TRAILER_MONO)) == pytest.approx(500.25 / f, abs=1e-9)
+        acq = spec.getAcquisitionInfo()[0]
+        assert acq.metaValueExists(TRAILER_MONO)
+        assert float(acq.getMetaValue(TRAILER_MONO)) == pytest.approx(500.25 / f, abs=1e-9)
         assert spec.getPrecursors()[0].getMZ() == pytest.approx(mz / f, abs=1e-9)
