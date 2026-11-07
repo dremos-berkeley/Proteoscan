@@ -25,6 +25,9 @@ SCAN_RE = re.compile(r"scan=(\d+)")
 TARGET_RE = re.compile(r"ms2 ([0-9.]+)@")
 
 
+TRAILER_MONO = "[Thermo Trailer Extra]Monoisotopic M/Z:"
+
+
 def _scan(nid: str) -> int:
     return int(SCAN_RE.search(nid).group(1))
 
@@ -65,7 +68,7 @@ def ms2_metadata(exp: oms.MSExperiment) -> pd.DataFrame:
         if master is None:
             master = ms1_indices[-2] if len(ms1_indices) >= 2 else (ms1_indices[-1] if ms1_indices else None)
         trailer = None
-        for key in ("[Thermo Trailer Extra]Monoisotopic M/Z:",):
+        for key in (TRAILER_MONO,):
             if s.metaValueExists(key):
                 trailer = float(s.getMetaValue(key))
         rows.append(dict(index=i, scan=_scan(nid), rt_min=s.getRT() / 60.0, precursor_mz=p.getMZ(),
@@ -163,7 +166,7 @@ def apply_precursor_offset(entries: pd.DataFrame, ppm: float) -> pd.DataFrame:
 
 def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: str | Path,
                         remove_precursor_region: bool = True, region_da: float = 0.5,
-                        keep_ms1: bool = False) -> pd.DataFrame:
+                        keep_ms1: bool = False, precursor_offset_ppm: float = 0.0) -> pd.DataFrame:
     """Write an mzML with every MS2 repeated once per precursor entry.
 
     Search engines key results by scan number, so every entry gets its own query number
@@ -191,6 +194,10 @@ def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: 
             p.setCharge(int(e.charge))
             c.setPrecursors([p])
             c.setNativeID(f"controllerType=0 controllerNumber=1 scan={int(e.query_id)}")
+            # Comet takes the precursor m/z from this Thermo trailer value when present (not from the selected
+            # ion set above), so a precursor recalibration must also be applied to it
+            if precursor_offset_ppm and c.metaValueExists(TRAILER_MONO):
+                c.setMetaValue(TRAILER_MONO, float(c.getMetaValue(TRAILER_MONO)) / (1.0 + precursor_offset_ppm * 1e-6))
             if remove_precursor_region:
                 keep = np.abs(mzs0 - float(e.mz)) > region_da + 0.7
                 c.set_peaks((mzs0[keep], ints0[keep]))

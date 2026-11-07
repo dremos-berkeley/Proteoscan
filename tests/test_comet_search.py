@@ -245,3 +245,34 @@ def test_read_comet_clipped_met_is_enzymatic(tmp_path):
     assert _clipped_met_enzymatic(_cfg(clip_nterm_methionine=True, digest_mode="Specific"))
     assert not _clipped_met_enzymatic(_cfg(clip_nterm_methionine=True, digest_mode="Semi-Specific"))
     assert not _clipped_met_enzymatic(_cfg(clip_nterm_methionine=False, digest_mode="Specific"))
+
+
+def _ms2_experiment():
+    import pyopenms as oms
+    exp = oms.MSExperiment()
+    s = oms.MSSpectrum()
+    s.setMSLevel(2)
+    s.setNativeID("controllerType=0 controllerNumber=1 scan=7")
+    s.setRT(60.0)
+    p = oms.Precursor(); p.setMZ(500.25); p.setCharge(2)
+    s.setPrecursors([p])
+    s.set_peaks(([200.0, 300.0, 400.0], [10.0, 20.0, 30.0]))
+    s.setMetaValue("[Thermo Trailer Extra]Monoisotopic M/Z:", 500.25)
+    exp.addSpectrum(s)
+    return exp
+
+
+@pytest.mark.parametrize("ppm", [0.0, 11.817])
+def test_expanded_mzml_trailer_mono_recalibrated(tmp_path, ppm):
+    import pyopenms as oms
+    from proteoscan.precursors import TRAILER_MONO, apply_precursor_offset, write_expanded_mzml
+    entries = apply_precursor_offset(pd.DataFrame({"scan": [7, 7], "precursor_idx": [0, 1], "mz": [500.25, 500.75],
+                                                   "charge": [2, 2]}), ppm)
+    out = tmp_path / "x.expanded.mzML"
+    write_expanded_mzml(_ms2_experiment(), entries, out, precursor_offset_ppm=ppm)
+    back = oms.MSExperiment(); oms.MzMLFile().load(str(out), back)
+    assert back.getNrSpectra() == 2
+    f = 1.0 + ppm * 1e-6
+    for spec, mz in zip(back, [500.25, 500.75]):
+        assert float(spec.getMetaValue(TRAILER_MONO)) == pytest.approx(500.25 / f, abs=1e-9)
+        assert spec.getPrecursors()[0].getMZ() == pytest.approx(mz / f, abs=1e-9)

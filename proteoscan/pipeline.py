@@ -64,7 +64,7 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
     entries = build_precursor_list(exp, feats, ms2)
     entries = apply_precursor_offset(entries, cfg.precursor_mass_offset_ppm)
     entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
-    entries = write_expanded_mzml(exp, entries, exp_mzml)
+    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=cfg.precursor_mass_offset_ppm)
     entries.to_parquet(ent_pq)
     return entries, exp_mzml
 
@@ -260,7 +260,7 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
             log.info("%s: %d precursor entries (%.0fs)", mzml.name, len(entries), time.time() - t0)
             txt = run_comet(cfg, [exp_mzml], rdir / "comet", num_output_lines=candidates_per_spectrum)[0]
             cands = read_comet(txt, source_file=mzml.name, fixed_mods=fixed,
-                        clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
+                               clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
             cands["proteins"] = cands["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
             cands = attach_entries(cands, entries)
             cands["rt"] = cands["raw_rt"].fillna(cands["rt"])
