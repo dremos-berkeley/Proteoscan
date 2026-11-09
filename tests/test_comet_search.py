@@ -266,19 +266,45 @@ def _ms2_experiment():
     return exp
 
 
+@pytest.mark.parametrize("source", ["entry", "trailer"])
 @pytest.mark.parametrize("ppm", [0.0, 11.817])
-def test_expanded_mzml_trailer_mono_recalibrated(tmp_path, ppm):
+def test_expanded_mzml_trailer_mono(tmp_path, ppm, source):
+    """Spectrum as ThermoRawFileParser mzML loads (trailer on the Acquisition), expanded into two entries with
+    different m/z. "entry": each copy's trailer = its entry m/z (offset applied); "trailer": every copy keeps the
+    instrument trailer, scaled by the offset (behaviour before 2026-11-09)."""
     import pyopenms as oms
     from proteoscan.precursors import TRAILER_MONO, apply_precursor_offset, write_expanded_mzml
     entries = apply_precursor_offset(pd.DataFrame({"scan": [7, 7], "precursor_idx": [0, 1], "mz": [500.25, 500.75],
                                                    "charge": [2, 2]}), ppm)
     out = tmp_path / "x.expanded.mzML"
-    write_expanded_mzml(_ms2_experiment(), entries, out, precursor_offset_ppm=ppm)
+    write_expanded_mzml(_ms2_experiment(), entries, out, precursor_offset_ppm=ppm, precursor_mz_source=source)
     back = oms.MSExperiment(); oms.MzMLFile().load(str(out), back)
     assert back.getNrSpectra() == 2
     f = 1.0 + ppm * 1e-6
     for spec, mz in zip(back, [500.25, 500.75]):
         acq = spec.getAcquisitionInfo()[0]
         assert acq.metaValueExists(TRAILER_MONO)
-        assert float(acq.getMetaValue(TRAILER_MONO)) == pytest.approx(500.25 / f, abs=1e-9)
+        want = mz / f if source == "entry" else 500.25 / f
+        assert float(acq.getMetaValue(TRAILER_MONO)) == pytest.approx(want, abs=1e-9)
         assert spec.getPrecursors()[0].getMZ() == pytest.approx(mz / f, abs=1e-9)
+
+
+def test_write_expanded_mzml_rejects_unknown_source(tmp_path):
+    from proteoscan.precursors import write_expanded_mzml
+    with pytest.raises(ValueError):
+        write_expanded_mzml(_ms2_experiment(), pd.DataFrame({"scan": [7], "precursor_idx": [0], "mz": [500.25],
+                                                             "charge": [2]}), tmp_path / "y.mzML",
+                            precursor_mz_source="selected_ion")
+
+
+def test_ms2_metadata_reads_trailer_from_acquisition():
+    from proteoscan.precursors import ms2_metadata
+    md = ms2_metadata(_ms2_experiment())
+    assert md["trailer_mono"].tolist() == [500.25]
+
+
+def test_precursor_mz_source_config():
+    assert _cfg().comet_precursor_mz_source == "entry"
+    assert _cfg(comet_precursor_mz_source="trailer").comet_precursor_mz_source == "trailer"
+    with pytest.raises(ValueError):
+        _cfg(comet_precursor_mz_source="selected_ion")

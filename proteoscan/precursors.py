@@ -67,10 +67,7 @@ def ms2_metadata(exp: oms.MSExperiment) -> pd.DataFrame:
                 master = ms1_by_scan.get(int(rs.group(1)))
         if master is None:
             master = ms1_indices[-2] if len(ms1_indices) >= 2 else (ms1_indices[-1] if ms1_indices else None)
-        trailer = None
-        for key in (TRAILER_MONO,):
-            if s.metaValueExists(key):
-                trailer = float(s.getMetaValue(key))
+        trailer = _trailer_mono(s)
         rows.append(dict(index=i, scan=_scan(nid), rt_min=s.getRT() / 60.0, precursor_mz=p.getMZ(),
                          target_mz=target, half_width=max(p.getIsolationWindowLowerOffset(), p.getIsolationWindowUpperOffset()) or 0.65,
                          charge=p.getCharge(), trailer_mono=trailer, master_ms1=master))
@@ -164,11 +161,23 @@ def apply_precursor_offset(entries: pd.DataFrame, ppm: float) -> pd.DataFrame:
     return entries
 
 
-def _scale_trailer_mono(spec: oms.MSSpectrum, factor: float) -> None:
-    """Multiply the Thermo trailer monoisotopic m/z by factor wherever it is stored: OpenMS keeps the mzML <scan>
-    userParam on the spectrum's Acquisition (getAcquisitionInfo()[i]); a spectrum-level meta value is handled too."""
+def _trailer_mono(spec: oms.MSSpectrum) -> float | None:
+    """The Thermo trailer monoisotopic m/z of a spectrum: OpenMS keeps the mzML <scan> userParam on the spectrum's
+    Acquisition (getAcquisitionInfo()[i]); a spectrum-level meta value is read first if present."""
     if spec.metaValueExists(TRAILER_MONO):
-        spec.setMetaValue(TRAILER_MONO, float(spec.getMetaValue(TRAILER_MONO)) * factor)
+        return float(spec.getMetaValue(TRAILER_MONO))
+    ai = spec.getAcquisitionInfo()
+    for i in range(ai.size()):
+        if ai[i].metaValueExists(TRAILER_MONO):
+            return float(ai[i].getMetaValue(TRAILER_MONO))
+    return None
+
+
+def _update_trailer_mono(spec: oms.MSSpectrum, new_value) -> None:
+    """Replace the trailer monoisotopic m/z wherever it is stored (spectrum level and every Acquisition);
+    new_value maps the old value to the new one. Spectra without a trailer value are left as they are."""
+    if spec.metaValueExists(TRAILER_MONO):
+        spec.setMetaValue(TRAILER_MONO, float(new_value(float(spec.getMetaValue(TRAILER_MONO)))))
     ai = spec.getAcquisitionInfo()  # a copy: rebuild and set back
     if not any(ai[i].metaValueExists(TRAILER_MONO) for i in range(ai.size())):
         return
@@ -181,20 +190,26 @@ def _scale_trailer_mono(spec: oms.MSSpectrum, factor: float) -> None:
     for i in range(ai.size()):
         a = ai[i]
         if a.metaValueExists(TRAILER_MONO):
-            a.setMetaValue(TRAILER_MONO, float(a.getMetaValue(TRAILER_MONO)) * factor)
+            a.setMetaValue(TRAILER_MONO, float(new_value(float(a.getMetaValue(TRAILER_MONO)))))
         new.push_back(a)
     spec.setAcquisitionInfo(new)
 
 
+PRECURSOR_MZ_SOURCES = ("entry", "trailer")
+
+
 def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: str | Path,
                         remove_precursor_region: bool = True, region_da: float = 0.5,
-                        keep_ms1: bool = False, precursor_offset_ppm: float = 0.0) -> pd.DataFrame:
+                        keep_ms1: bool = False, precursor_offset_ppm: float = 0.0,
+                        precursor_mz_source: str = "entry") -> pd.DataFrame:
     """Write an mzML with every MS2 repeated once per precursor entry.
 
     Search engines key results by scan number, so every entry gets its own query number
     (`query_id`, 1..N in file order) which replaces the scan number in the native id. Returns
     the entries with the `query_id` column added; keep it to map results back to
     (scan, precursor_idx)."""
+    if precursor_mz_source not in PRECURSOR_MZ_SOURCES:
+        raise ValueError(f"precursor_mz_source {precursor_mz_source!r} not in {PRECURSOR_MZ_SOURCES}")
     entries = entries.sort_values(["scan", "precursor_idx"]).reset_index(drop=True).copy()
     entries["query_id"] = np.arange(1, len(entries) + 1)
     by_scan = {k: g for k, g in entries.groupby("scan")}
@@ -216,10 +231,15 @@ def write_expanded_mzml(exp: oms.MSExperiment, entries: pd.DataFrame, out_path: 
             p.setCharge(int(e.charge))
             c.setPrecursors([p])
             c.setNativeID(f"controllerType=0 controllerNumber=1 scan={int(e.query_id)}")
-            # Comet takes the precursor m/z from this Thermo trailer value when present (not from the selected
-            # ion set above), so a precursor recalibration must also be applied to it
-            if precursor_offset_ppm:
-                _scale_trailer_mono(c, 1.0 / (1.0 + precursor_offset_ppm * 1e-6))
+            # Comet takes the precursor m/z from the Thermo trailer value when present, not from the selected ion
+            # set above. "entry": the trailer is set to this entry's m/z, so Comet searches the entry (feature-based
+            # or monoisotope-corrected, offset included). "trailer": behaviour before 2026-11-09, every entry of a
+            # scan searched at the instrument's trailer m/z (offset applied to it when one is configured).
+            if precursor_mz_source == "entry":
+                _update_trailer_mono(c, lambda _old, v=float(e.mz): v)
+            elif precursor_offset_ppm:
+                f = 1.0 / (1.0 + precursor_offset_ppm * 1e-6)
+                _update_trailer_mono(c, lambda old, f=f: old * f)
             if remove_precursor_region:
                 keep = np.abs(mzs0 - float(e.mz)) > region_da + 0.7
                 c.set_peaks((mzs0[keep], ints0[keep]))

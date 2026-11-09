@@ -64,7 +64,8 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
     entries = build_precursor_list(exp, feats, ms2)
     entries = apply_precursor_offset(entries, cfg.precursor_mass_offset_ppm)
     entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
-    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=cfg.precursor_mass_offset_ppm)
+    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=cfg.precursor_mass_offset_ppm,
+                                  precursor_mz_source=cfg.comet_precursor_mz_source)
     entries.to_parquet(ent_pq)
     return entries, exp_mzml
 

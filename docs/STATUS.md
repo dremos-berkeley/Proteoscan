@@ -18,12 +18,15 @@ scan and charge (PSM); exact modified sequence (peptide); shared accession (prot
 | configuration | PSMs reported | PSM recall | PSM precision | peptide recall | protein-group recall |
 |---|---|---|---|---|---|
 | Comet e-value only | 1,198 | 0.13 | 0.84 | | |
-| + rescoring (mokapot), corrected precursors | 11,126 | 0.74 | 0.50 | 0.82 | 0.95 |
+| + rescoring (mokapot), corrected precursors* | 11,126 | 0.74 | 0.50 | 0.82 | 0.95 |
 | + PEAKS-imitation model (cross-validated) | 10,722 | 0.75 | 0.52 | 0.83 | 0.95 |
 | + two-pass search with protein support, imitation | 14,609 | 0.81 | 0.41 | 0.88 | 0.95 |
 | same, cut at PEAKS's PSM count | 7,595 | 0.67 | 0.66 | 0.78 | 0.88 |
 
 On scans identified by both, the peptide is identical in 97% of cases.
+
+*"Corrected precursors" here means the precursor list was built; Comet nevertheless searched each query at the
+Thermo trailer monoisotopic m/z (see "Corrections (2026-11-09)"). All rows of this table predate the fix.
 
 Entrapment validation (human + shuffled entrapment database of equal size): measured false
 discovery proportion 0.5% at the PEAKS-style filter and 0.9% at nominal 1% PSM FDR (single
@@ -195,3 +198,16 @@ tables (STATUS rows before 2026-10-05, docs/IONTRAP_MODEL.md).
 Also observed: mokapot brew with max_workers > 1 is not reproducible for a fixed seed (the fold
 models share one generator across threads); even with max_workers = 1, repeated runs differed on
 one pool (9,435 vs 9,073 PSMs). Single-seed comparisons carry that noise.
+
+## Corrections (2026-11-09, branch feat/comet-terminal-mods-precursor-offset)
+- **P4, Comet ignored the per-entry precursor m/z (bug).** `write_expanded_mzml` sets each copy's selected-ion
+  m/z to its precursor entry (feature monoisotopic m/z, or the monoisotope-corrected featureless m/z), but the copy
+  keeps the `[Thermo Trailer Extra]Monoisotopic M/Z` userParam of the original scan, and Comet takes the precursor
+  m/z from that value when present. Every search before this branch therefore searched every entry of a scan at the
+  instrument's trailer m/z; extra entries changed only the charge tried. Found in PRO_PAA_jurkat_proteome_optimization
+  _261009_1 (DrewR_Adam_100926 OT_2: Comet m/z = trailer in 100% of 85,297 rank-1 queries, entry m/z differs by
+  > 0.01 Da in 52%). Fixed: `SearchConfig.comet_precursor_mz_source` = `entry` (default; each copy's trailer is
+  set to the entry m/z, so the intended m/z is searched) or `trailer` (the old behaviour, for reproducing earlier
+  runs; a configured `precursor_mass_offset_ppm` is applied to the trailer). `ms2_metadata` also read the trailer
+  from the spectrum, where OpenMS never puts it, so `trailer_mono` was always None (no downstream use); it now reads
+  the Acquisition. Every result above this section predates the fix.
