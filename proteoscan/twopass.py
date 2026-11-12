@@ -20,36 +20,50 @@ import pandas as pd
 DECOY_PREFIXES = ("#DECOY#", "DECOY_", "rev_")
 
 
-def _acc(protein_id: str) -> tuple[str, bool]:
+def _acc(protein_id: str, twin_prefix: str = "") -> tuple[str, bool]:
+    """(accession, is_decoy). With `twin_prefix` an entrapment twin keeps the prefix in front of its accession."""
     p, decoy = protein_id, False
     for t in DECOY_PREFIXES:
         if p.startswith(t):
             p, decoy = p[len(t):], True
+    twin = bool(twin_prefix) and p.startswith(twin_prefix)
+    if twin:
+        p = p[len(twin_prefix):]
     parts = p.split("|")
-    return (parts[1] if len(parts) >= 3 and parts[0] in ("sp", "tr") else parts[0]), decoy
+    acc = parts[1] if len(parts) >= 3 and parts[0] in ("sp", "tr") else parts[0]
+    return (twin_prefix + acc if twin else acc), decoy
 
 
-def protein_support(accepted: pd.DataFrame) -> tuple[dict[str, int], dict[str, set]]:
+def protein_support(accepted: pd.DataFrame, twin_prefix: str = "") -> tuple[dict[str, int], dict[str, set]]:
     """accepted: pass-1 accepted target PSM candidates (columns stripped, proteins).
-    Returns ({accession: n distinct sequences}, {accession: set(sequences)})."""
+    Returns ({accession: n distinct sequences}, {accession: set(sequences)}).
+
+    Entrapment validation (`twin_prefix`): only real targets collect support, and the twin of each protein
+    inherits its count, exactly as a decoy inherits the support of the target it was derived from, so the
+    feature cannot separate targets from entrapment sequences by itself."""
     seqs: dict[str, set] = defaultdict(set)
     for stripped, proteins in zip(accepted["stripped"], accepted["proteins"]):
         key = stripped.replace("I", "L")
         for p in str(proteins).split(";"):
-            a, decoy = _acc(p)
-            if not decoy:
+            a, decoy = _acc(p, twin_prefix)
+            if not decoy and not (twin_prefix and a.startswith(twin_prefix)):
                 seqs[a].add(key)
-    return {a: len(s) for a, s in seqs.items()}, seqs
+    support = {a: len(s) for a, s in seqs.items()}
+    if twin_prefix:
+        for a in list(support):
+            support[twin_prefix + a] = support[a]
+    return support, seqs
 
 
-def add_protein_features(cands: pd.DataFrame, support: dict[str, int], seqs: dict[str, set]) -> pd.DataFrame:
+def add_protein_features(cands: pd.DataFrame, support: dict[str, int], seqs: dict[str, set],
+                         twin_prefix: str = "") -> pd.DataFrame:
     out = cands.copy()
     vals = np.zeros(len(out))
     for i, (stripped, proteins) in enumerate(zip(out["stripped"], out["proteins"])):
         key = stripped.replace("I", "L")
         best = 0
         for p in str(proteins).split(";"):
-            a, decoy = _acc(p)
+            a, decoy = _acc(p, twin_prefix)
             n = support.get(a, 0)
             if not decoy and key in seqs.get(a, ()):
                 n -= 1  # do not let a peptide support itself

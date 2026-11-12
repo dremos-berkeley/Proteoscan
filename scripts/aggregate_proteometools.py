@@ -2,6 +2,7 @@
 versus PEAKS (DL boost on/off) at each method's own 1% FDR and at matched measured error.
 
     python scripts/aggregate_proteometools.py --out /drive_a/drew/proteoscan-work/benchmarks/proteometools/SUMMARY.md
+    python scripts/aggregate_proteometools.py --work <benchmark dir> --exclude TUM_first_pool_123 --out <dir>/SUMMARY.md
 """
 import argparse, glob, json, re, sys
 from pathlib import Path
@@ -54,9 +55,16 @@ def true_peptides_at(df, cls, fdp, target):
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--out", required=True); a = ap.parse_args()
+    global W
+    ap = argparse.ArgumentParser(); ap.add_argument("--out", required=True)
+    ap.add_argument("--work", default=str(W), help="benchmark directory with <run>/split and <run>/<scan type>")
+    ap.add_argument("--exclude", nargs="*", default=[], help="pools to leave out")
+    a = ap.parse_args()
+    W = Path(a.work)
     rows = []
     for pool in D.joinpath("pools.txt").read_text().split():
+        if pool in a.exclude:
+            continue
         runs = [p for p in W.glob(f"*-{pool}_01_01-2xIT_2xHCD-*") if (p / "split").is_dir()]
         if not runs:
             continue
