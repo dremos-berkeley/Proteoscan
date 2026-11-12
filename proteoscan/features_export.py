@@ -15,8 +15,9 @@ docs/FEATURES_EXPORT.md):
 * `Accession` holds the proteins of the lexicographically first variant only (66/66 multi-variant
   features in samples 1-4), in their psms order, `:`-joined.
 * `ppm` is the *uncalibrated* error of the feature m/z against the peptide mass,
-  ``((m/z - proton) * z - M) / M * 1e6`` (psms' ppm is after recalibration; the two differ by
-  ~8 ppm in sample 4). With the exact peptide mass this lands within 0.1 ppm of PEAKS' value for
+  ``((m/z - proton) * z - M) / M * 1e6`` (PEAKS: psms' ppm is after recalibration; the two differ by
+  ~8 ppm in sample 4. Proteoscan: psms' ppm is against the searched m/z, which carries
+  `precursor_mass_offset_ppm` when one is configured; feature m/z are never recalibrated). With the exact peptide mass this lands within 0.1 ppm of PEAKS' value for
   99.8% of DB rows but reproduces the printed digit for only ~74%: PEAKS' value sits ~0.03 ppm
   higher on average for a reason we have not found.
 * De novo rows: best-ALC de novo result per feature (99.9% peptide, 100% ALC agreement against

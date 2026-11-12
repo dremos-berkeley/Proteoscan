@@ -28,6 +28,9 @@ MOD_DELTAS: dict[str, float] = {
 }
 
 
+POSITIONS = {"anywhere", "peptide_nterm", "protein_nterm", "peptide_cterm"}
+
+
 @dataclass
 class Modification:
     name: str            # PEAKS name, e.g. "Oxidation"
@@ -36,6 +39,8 @@ class Modification:
     position: str = "anywhere"  # anywhere | peptide_nterm | protein_nterm | peptide_cterm
 
     def __post_init__(self) -> None:
+        if self.position not in POSITIONS:
+            raise ValueError(f"modification {self.name!r}: position {self.position!r} not in {sorted(POSITIONS)}")
         if self.delta is None:
             if self.name not in MOD_DELTAS:
                 raise ValueError(f"unknown modification {self.name!r}; give delta explicitly")
@@ -72,8 +77,16 @@ class SearchConfig:
     isotope_errors: tuple[int, int] = (-1, 3)
     threads: int = 16
     fragment_bin_offset: float = 0.4          # only used by Comet-style low-res scoring
+    clip_nterm_methionine: bool = False       # Comet: also search protein sequences without the initiator Met
+    precursor_mass_offset_ppm: float = 0.0    # measured precursor m/z error; searched m/z = m/z / (1 + ppm * 1e-6)
+    # m/z Comet searches for each precursor entry: "entry" = the entry's own m/z (feature-based or monoisotope-corrected,
+    # offset included; the intended behaviour, from 2026-11-09); "trailer" = the instrument's trailer monoisotopic m/z
+    # for every entry of a scan (what every search before 2026-11-09 did; offset applied to it)
+    comet_precursor_mz_source: str = "entry"
 
     def __post_init__(self) -> None:
+        if self.comet_precursor_mz_source not in ("entry", "trailer"):
+            raise ValueError(f"comet_precursor_mz_source {self.comet_precursor_mz_source!r} not in ('entry', 'trailer')")
         # A variable mod on a residue that also carries a fixed mod is stacked by Comet on top of the
         # static delta (e.g. fixed CAM + variable CAM on C searches C+114), so refuse the combination.
         def sites(m: Modification) -> set[str]:

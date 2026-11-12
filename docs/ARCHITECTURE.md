@@ -22,6 +22,15 @@ inspect the PEAKS binary.
                (b) split chimeric MS2 scans into one query per co-isolated feature
                (PEAKS: 262k MGF entries from 195k MS2 scans on Jurkat), (c) report
                "Feature Id" and "Area".
+               Correction to (a)/(b), 2026-11-09: Comet takes the precursor m/z of each query
+               from the Thermo trailer "Monoisotopic M/Z" userParam, which every expanded copy
+               inherited unchanged, not from the selected-ion m/z Proteoscan writes. Before
+               branch feat/comet-terminal-mods-precursor-offset every entry of a scan was
+               therefore searched at the instrument's trailer m/z; the per-entry (feature-based
+               or monoisotope-corrected) m/z changed only the charge tried. From that branch,
+               `comet_precursor_mz_source: entry` (default) sets each copy's trailer to the
+               entry m/z so the corrected m/z is searched; `trailer` reproduces the old
+               behaviour. See docs/STATUS.md "Corrections (2026-11-09)".
 3. `denovo`    De novo sequencing per query (Casanovo or PEAKS-style tag graph) giving
                a full sequence, ALC, and per-residue local confidence. Provides the
                `denovoOnly` export and the "tag" features used by DB search rescoring.

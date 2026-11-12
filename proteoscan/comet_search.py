@@ -42,6 +42,10 @@ AA_NAMES = {"G": "glycine", "A": "alanine", "S": "serine", "P": "proline", "V": 
 TERMINI = {"N-term": "add_Nterm_peptide", "C-term": "add_Cterm_peptide"}
 # Comet's unused variable-mod slot, as written by `comet -p`
 EMPTY_VARIABLE_MOD = "0.0 X 0 3 -1 0 0 0.0"
+# Modification.position -> Comet (term_distance, n/c-term flag); flag 0/1/2/3 = protein N/C, peptide N/C
+COMET_TERM = {"anywhere": (-1, 0), "protein_nterm": (0, 0), "peptide_nterm": (0, 2), "peptide_cterm": (0, 3)}
+TERMINUS_DEFAULT_POSITION = {"N-term": "peptide_nterm", "C-term": "peptide_cterm"}
+MAX_VARIABLE_MOD_LINES = 15
 
 
 def fixed_mod_deltas(cfg: SearchConfig) -> dict[str, float]:
@@ -103,12 +107,20 @@ def build_comet_params(cfg: SearchConfig, num_output_lines: int = 5, decoy_prefi
         "minimum_peaks": 10,
         "activation_method": "ALL",
     }
-    # variable mods
-    residues_by_delta: dict[float, str] = {}
+    # variable mods: one line per (delta, position); termini as Comet 'n'/'c' with term_distance and flag
+    residues_by: dict[tuple[float, str], str] = {}
     for m in cfg.variable_modifications:
-        residues_by_delta[m.delta] = residues_by_delta.get(m.delta, "") + m.residues
-    for i, (delta, res) in enumerate(sorted(residues_by_delta.items()), start=1):
-        settings[f"variable_mod{i:02d}"] = f"{delta:.6f} {res} 0 {cfg.max_variable_ptm_per_peptide} -1 0 0 0.0"
+        res = {"N-term": "n", "C-term": "c"}.get(m.residues, m.residues)
+        pos = m.position
+        if pos == "anywhere" and m.residues in TERMINUS_DEFAULT_POSITION:
+            pos = TERMINUS_DEFAULT_POSITION[m.residues]
+        residues_by[(m.delta, pos)] = residues_by.get((m.delta, pos), "") + res
+    if len(residues_by) > MAX_VARIABLE_MOD_LINES:
+        raise ValueError(f"{len(residues_by)} variable-mod lines; Comet supports {MAX_VARIABLE_MOD_LINES}")
+    for i, ((delta, pos), res) in enumerate(sorted(residues_by.items()), start=1):
+        dist, flag = COMET_TERM[pos]
+        settings[f"variable_mod{i:02d}"] = f"{delta:.6f} {res} 0 {cfg.max_variable_ptm_per_peptide} {dist} {flag} 0 0.0"
+    settings["clip_nterm_methionine"] = int(cfg.clip_nterm_methionine)
     # fixed (static) mods: every add_* line was zeroed above, so only configured mods are applied
     for key, delta in fixed_mod_deltas(cfg).items():
         settings[_static_param_key(key)] = delta
@@ -165,7 +177,7 @@ def _add_terminal(pep: str, which: str, delta: float) -> str:
 
 
 def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: str = "DECOY_",
-               fixed_mods: dict[str, float] | None = None) -> pd.DataFrame:
+               fixed_mods: dict[str, float] | None = None, clipped_met_enzymatic: bool = False) -> pd.DataFrame:
     df = pd.read_csv(txt, sep="\t", skiprows=1)
     fixed_mods = fixed_mods or {}
     src = source_file or Path(txt).stem
@@ -205,6 +217,8 @@ def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: st
     out["peptide_len"] = out["stripped"].str.len()
     out["missed_cleavages"] = out["stripped"].str[:-1].str.count(r"[KR](?!P)")
     nterm_ok = out["prev_aa"].isin(["K", "R", "-"]) & ~out["stripped"].str.startswith("P")
+    if clipped_met_enzymatic:  # fully specific search with clip_nterm_methionine: prev_aa M = initiator Met removed
+        nterm_ok |= out["prev_aa"] == "M"
     cterm_ok = out["stripped"].str[-1].isin(["K", "R"]) | (out["next_aa"] == "-")
     out["semi_enzymatic"] = (~(nterm_ok & cterm_ok)).astype(int)
     out["matched_intensity_pct"] = np.nan

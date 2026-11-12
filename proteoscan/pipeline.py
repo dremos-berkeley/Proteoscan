@@ -42,7 +42,8 @@ log = logging.getLogger("proteoscan.pipeline")
 
 
 def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: SearchConfig):
-    from .precursors import build_precursor_list, load_experiment, ms2_metadata, write_expanded_mzml
+    from .precursors import (apply_precursor_offset, build_precursor_list, load_experiment, ms2_metadata,
+                             write_expanded_mzml)
     ent_pq = out / "precursors.parquet"
     exp_mzml = out / (mzml.stem + ".expanded.mzML")
     if ent_pq.exists() and exp_mzml.exists():
@@ -61,10 +62,18 @@ def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: Sear
         feats = detect_features(str(mzml), **kw)
         feats.to_parquet(out / "ms1_features.parquet")
     entries = build_precursor_list(exp, feats, ms2)
+    entries = apply_precursor_offset(entries, cfg.precursor_mass_offset_ppm)
     entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
-    entries = write_expanded_mzml(exp, entries, exp_mzml)
+    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=cfg.precursor_mass_offset_ppm,
+                                  precursor_mz_source=cfg.comet_precursor_mz_source)
     entries.to_parquet(ent_pq)
     return entries, exp_mzml
+
+
+def _clipped_met_enzymatic(cfg: SearchConfig) -> bool:
+    """Comet reports prev_aa 'M' for peptides after a clipped initiator Met; in a fully specific search that is
+    the only way such a candidate arises, so it is an enzymatic N-terminus (not semi_enzymatic)."""
+    return bool(cfg.clip_nterm_methionine) and cfg.digest_mode.lower() == "specific"
 
 
 def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
@@ -123,7 +132,8 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
         entries = pd.read_parquet(rdir / "precursors.parquet")
         exp_mzml = rdir / (mzml.stem + ".expanded.mzML")
         txt = run_comet(cfg2, [exp_mzml], rdir / "comet_pass2", num_output_lines=candidates_per_spectrum + 2)[0]
-        c2 = read_comet(txt, source_file=mzml.name, fixed_mods=fixed)
+        c2 = read_comet(txt, source_file=mzml.name, fixed_mods=fixed,
+                        clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
         c2["proteins"] = c2["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
         c2 = attach_entries(c2, entries)
         c2["rt"] = c2["raw_rt"].fillna(c2["rt"])
@@ -250,7 +260,8 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
             entries, exp_mzml = stage_precursors(mzml, rdir, features_path, cfg)
             log.info("%s: %d precursor entries (%.0fs)", mzml.name, len(entries), time.time() - t0)
             txt = run_comet(cfg, [exp_mzml], rdir / "comet", num_output_lines=candidates_per_spectrum)[0]
-            cands = read_comet(txt, source_file=mzml.name, fixed_mods=fixed)
+            cands = read_comet(txt, source_file=mzml.name, fixed_mods=fixed,
+                               clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
             cands["proteins"] = cands["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
             cands = attach_entries(cands, entries)
             cands["rt"] = cands["raw_rt"].fillna(cands["rt"])
@@ -338,9 +349,13 @@ def main(argv=None):
     ap.add_argument("--fragment-model", default="HCD2021",
                     help="fragment-intensity predictor: an MS2PIP model name, or peptdeep:<ckpt> / "
                          "peptdeep:hcd=<ckpt>,cid=<ckpt> (docs/IONTRAP_MODEL.md)")
+    ap.add_argument("--precursor-offset-ppm", type=float, default=None,
+                    help="measured precursor mass error (ppm) to remove before the search; overrides the config")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     cfg = SearchConfig.from_yaml(a.config)
+    if a.precursor_offset_ppm is not None:
+        cfg.precursor_mass_offset_ppm = a.precursor_offset_ppm
     stats = run(cfg, [Path(m) for m in a.input], Path(a.out), a.mode, a.model, a.sample_name, a.processes,
                 a.ref, a.features, a.candidates, two_pass=not a.single_pass, fragment_model=a.fragment_model,
                 summary=not a.no_summary)
