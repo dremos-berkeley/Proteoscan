@@ -14,11 +14,11 @@ claimed 1% FDR; "at measured 1%" cuts each method's ranked list where its measur
 | scan type | method | PSMs | measured FDP | FDP without carry-over* | true peptides | true peptides at measured 1% |
 |---|---|---|---|---|---|---|
 | HCD ion trap | Proteoscan | 9,909 | 1.47% | 0.50% | 825 | 753 |
-| HCD ion trap | Proteoscan, fine-tuned fragment model | 10,373 | 1.45% | | 844 | 773 |
+| HCD ion trap | Proteoscan, fine-tuned fragment model | 10,373 | 1.45% | 0.46% | 844 | 773 |
 | HCD ion trap | PEAKS, DL boost on | 8,796 | 1.31% | 0.43% | 831 | 706 |
 | HCD ion trap | PEAKS, DL boost off | 7,659 | 0.98% | 0.19% | 800 | 742 |
 | CID ion trap | Proteoscan | 9,384 | 1.30% | 0.44% | 805 | 745 |
-| CID ion trap | Proteoscan, fine-tuned fragment model | 10,066 | 1.39% | | 823 | 759 |
+| CID ion trap | Proteoscan, fine-tuned fragment model | 10,066 | 1.39% | 0.47% | 823 | 759 |
 | CID ion trap | PEAKS, DL boost on | 9,056 | 1.34% | 0.46% | 830 | 720 |
 | CID ion trap | PEAKS, DL boost off | 7,899 | 0.96% | 0.12% | 798 | 729 |
 | HCD Orbitrap | Proteoscan | 21,483 | 1.19% | 0.40% | 852 | 792 |
@@ -53,6 +53,7 @@ right-sequence, wrong-modification error that target-decoy rescoring cannot lear
 (tolerance narrowed to max(5 ppm, 10 robust SD) after a quick estimation search, as MaxQuant and MSFragger do)
 excludes it.
 
+Benchmark report with figures: https://claude.ai/artifact/UfDyKywzNu2ib9wzAUmKvH (private link).
 Tables: /drive_a/drew/proteoscan-work/benchmarks/proteometools_2026-11-12/{SUMMARY_truth.md,SUMMARY_truth.csv,
 false_breakdown.csv}; fine-tuned model: proteometools_2026-11-12_finetuned/. Reproduce with
 scripts/run_proteometools_benchmark.sh and scripts/aggregate_proteometools.py --work.
