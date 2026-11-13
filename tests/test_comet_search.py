@@ -160,7 +160,10 @@ def test_anywhere_mods_unchanged_lines(template):
     text = cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=BASE_VARIABLE))
     assert _var_lines(text) == ["15.994915 M 0 3 -1 0 0 0.0", "57.021464 C 0 3 -1 0 0 0.0",
                                 "71.037114 C 0 3 -1 0 0 0.0"]
-    assert _params(text)["clip_nterm_methionine"] == "0"
+    assert _params(text)["clip_nterm_methionine"] == "1"   # default: initiator Met removal is searched
+    off = cs.build_comet_params(_cfg(fixed_modifications=[], variable_modifications=BASE_VARIABLE,
+                                     clip_nterm_methionine=False))
+    assert _params(off)["clip_nterm_methionine"] == "0"
 
 
 def test_protein_nterm_acetyl_and_clipping(template):

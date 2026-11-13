@@ -108,8 +108,20 @@ def link_features(ms2: pd.DataFrame, features: pd.DataFrame, rt_slack: float = 0
                          "rt": frt[ix], "area": farea[ix]})
 
 
+PRIMARY_MAX_ISOTOPE = 3     # a feature this many isotope peaks from the instrument precursor is still "primary"
+PRIMARY_TOL_DA = 0.03       # on the neutral-mass scale
+
+
 def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, ms2: pd.DataFrame | None = None,
-                         dedup_ppm: float = 12.0, correct_featureless: bool = True) -> pd.DataFrame:
+                         dedup_ppm: float = 12.0, correct_featureless: bool = True,
+                         feature_linking: str = "all") -> pd.DataFrame:
+    """One row per (MS2 scan, precursor entry). Besides m/z, charge and the feature columns each entry carries
+    `primary` (1 = the instrument's own precursor: the featureless entry, or a feature with the instrument charge
+    whose monoisotopic m/z is the selected ion or one of its isotopes; 0 = another co-isolated species),
+    `area_frac` (the feature's share of the summed area of the scan's linked features; 0 for featureless) and
+    `n_entries` (entries of the scan). `feature_linking="primary"` drops the co-isolated species."""
+    if feature_linking not in ("all", "primary"):
+        raise ValueError(f"feature_linking {feature_linking!r} not in ('all', 'primary')")
     if ms2 is None:
         ms2 = ms2_metadata(exp)
     linked = link_features(ms2, features) if features is not None and len(features) else pd.DataFrame(
@@ -119,14 +131,22 @@ def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, m
     entries = []
     for r in ms2.itertuples(index=False):
         k = 0
+        z = int(r.charge) if r.charge else 2
         feats = by_scan.get(int(r.scan))
         if feats is not None:
-            for fr in feats.itertuples(index=False):
+            d = (feats["mz"].to_numpy(float) - float(r.precursor_mz)) * feats["charge"].to_numpy(float)
+            iso = np.rint(d / C13)
+            prim = ((np.abs(d - iso * C13) < PRIMARY_TOL_DA) & (np.abs(iso) <= PRIMARY_MAX_ISOTOPE)
+                    & (feats["charge"].to_numpy(int) == z))
+            tot = float(np.nansum(feats["area"].to_numpy(float))) or 1.0
+            for fr, is_primary in zip(feats.itertuples(index=False), prim):
+                if feature_linking == "primary" and not is_primary:
+                    continue
                 entries.append(dict(scan=int(r.scan), precursor_idx=k, mz=fr.mz, charge=fr.charge, rt=fr.rt,
-                                    feature_id=fr.feature_id, area=fr.area, source="feature", shift=0))
+                                    feature_id=fr.feature_id, area=fr.area, source="feature", shift=0,
+                                    primary=int(is_primary), area_frac=float(fr.area) / tot if fr.area == fr.area else 0.0))
                 k += 1
         # featureless entry
-        z = int(r.charge) if r.charge else 2
         mz, shift = float(r.precursor_mz), 0
         if correct_featureless and r.master_ms1 is not None and not pd.isna(r.master_ms1):
             mi = int(r.master_ms1)
@@ -145,8 +165,12 @@ def build_precursor_list(exp: oms.MSExperiment, features: pd.DataFrame | None, m
                 dup = True
         if not dup:
             entries.append(dict(scan=int(r.scan), precursor_idx=k, mz=mz, charge=z, rt=float(r.rt_min),
-                                feature_id=0, area=np.nan, source="featureless", shift=shift))
-    return pd.DataFrame(entries)
+                                feature_id=0, area=np.nan, source="featureless", shift=shift, primary=1,
+                                area_frac=0.0))
+    out = pd.DataFrame(entries)
+    if len(out):
+        out["n_entries"] = out.groupby("scan")["scan"].transform("size").astype(int)
+    return out
 
 
 def apply_precursor_offset(entries: pd.DataFrame, ppm: float) -> pd.DataFrame:

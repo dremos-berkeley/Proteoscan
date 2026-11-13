@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .config import SearchConfig
+from .config import ISOTOPE_ERROR_OPTIONS, SearchConfig
 from .monoiso import C13, PROTON
 
 ENZYME_NUMBERS = {"trypsin": 1, "trypsin/p": 2, "lys-c": 3, "lys-n": 4, "arg-c": 5, "asp-n": 6,
@@ -78,7 +78,7 @@ def build_comet_params(cfg: SearchConfig, num_output_lines: int = 5, decoy_prefi
     text = re.sub(r"^(add_\w+) = \S+", r"\1 = 0.0", text, flags=re.M)
     text = re.sub(r"^(variable_mod\d\d) = .*$", rf"\1 = {EMPTY_VARIABLE_MOD}", text, flags=re.M)
     lo, hi = cfg.isotope_errors
-    iso = {(0, 0): 0, (0, 1): 1, (0, 2): 2, (0, 3): 3, (-1, 3): 4, (-1, 1): 5, (-3, 3): 6}.get((lo, hi), 4)
+    iso = ISOTOPE_ERROR_OPTIONS[(lo, hi)]  # SearchConfig refuses unsupported pairs
     settings = {
         "database_name": str(cfg.database),
         "decoy_search": 1 if generate_decoys else 0,
@@ -228,3 +228,53 @@ def read_comet(txt: str | Path, source_file: str | None = None, decoy_prefix: st
     best = out.groupby(["source_file", "scan"])["hyperscore"].transform("max")
     out["delta_best"] = best - out["hyperscore"]
     return out
+
+
+def canonicalize_clipped_nterm(cands: pd.DataFrame, fasta: str | Path,
+                               decoy_prefixes: tuple[str, ...] = ("DECOY_", "#DECOY#")) -> pd.DataFrame:
+    """Give every peptide that starts at residue 2 of a protein beginning with Met the flank '-' (protein
+    N-terminus after initiator-Met removal) and recompute `semi_enzymatic` for it.
+
+    With clip_nterm_methionine Comet reports such a peptide either as the clipped protein N-terminus (prev_aa
+    '-') or as a cleavage after Met-1 (prev_aa 'M'): mostly 'M' for targets, about half '-' for decoys, and not
+    the same way in two runs of one search. Decoy peptides are the target peptide reversed with the C-terminal
+    residue kept, so a decoy is looked up through its target peptide. Modifies and returns `cands`."""
+    from .decoys import read_fasta
+    rows = np.flatnonzero((cands["prev_aa"] == "M").to_numpy())
+    if not len(rows):
+        return cands
+
+    def split(protein_id):
+        for t in decoy_prefixes:
+            if protein_id.startswith(t):
+                return protein_id[len(t):], True
+        return protein_id, False
+
+    stripped = cands["stripped"].to_numpy()
+    proteins = cands["proteins"].to_numpy()
+    need = {split(x)[0] for i in rows for x in str(proteins[i]).split(";")}
+    start = {}
+    for h, seq in read_fasta(fasta):
+        pid = h.split()[0]
+        if pid in need and seq[:1] == "M":
+            start[pid] = seq[1:]
+    hit = []
+    for i in rows:
+        pep = stripped[i]
+        for x in str(proteins[i]).split(";"):
+            pid, decoy = split(x)
+            rest = start.get(pid)
+            if rest is not None and rest.startswith(pep[:-1][::-1] + pep[-1] if decoy else pep):
+                hit.append(i)
+                break
+    if hit:
+        hit = np.asarray(hit)
+        col = cands.columns.get_loc
+        cands.iloc[hit, col("prev_aa")] = "-"
+        if "semi_enzymatic" in cands.columns:
+            sub = cands.iloc[hit]
+            nterm_ok = ~sub["stripped"].str.startswith("P")
+            cterm_ok = sub["stripped"].str[-1].isin(["K", "R"]) | (sub["next_aa"] == "-")
+            cands.iloc[hit, col("semi_enzymatic")] = (~(nterm_ok & cterm_ok)).astype(int).to_numpy()
+    return cands
+

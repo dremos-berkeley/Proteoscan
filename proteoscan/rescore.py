@@ -31,6 +31,14 @@ def _features(df: pd.DataFrame, cols=None) -> tuple[pd.DataFrame, list[str]]:
     return X, cols
 
 
+# Reproducible rescoring. mokapot.brew builds its default PercolatorModel without a seed, so the inner
+# cross-validation that picks the SVM class weights is split differently on every call; when two settings are
+# nearly tied the chosen one, and with it the accepted set, changed between runs of identical input (Jurkat:
+# 21,626 vs 20,317 PSMs). rescore_tda therefore passes a seeded model, and also uses one worker (brew's fold
+# threads share one generator), single-threaded linear algebra and a canonical row order.
+MOKAPOT_WORKERS = 1
+
+
 def _cv_scores(ds, models, test_fdr: float, seed: int) -> np.ndarray:
     """Held-out scores exactly as mokapot.brew assigns them: brew splits the PSMs into folds with a
     generator seeded by `seed` (the split is its first use of that generator) and scores each fold with
@@ -53,9 +61,21 @@ def rescore_tda(df: pd.DataFrame, feature_cols=None, seed: int = 0) -> pd.DataFr
     """mokapot semi-supervised rescoring; adds `score` (cross-validated: every PSM is scored by the fold
     model that did not train on it, as mokapot reports) and `mokapot_q` (mokapot's PSM-level q-value for
     the PSMs that won their spectrum in mokapot's competition; NaN for the others). The returned frame
-    has a fresh RangeIndex."""
+    has a fresh RangeIndex.
+
+    Reproducible for identical candidates in any row order (see MOKAPOT_WORKERS above)."""
+    from threadpoolctl import threadpool_limits
+    with threadpool_limits(limits=1):
+        return _rescore_tda(df, feature_cols, seed)
+
+
+def _rescore_tda(df: pd.DataFrame, feature_cols=None, seed: int = 0) -> pd.DataFrame:
     import mokapot
-    work = df.reset_index(drop=True)  # mokapot indexes folds positionally via .loc
+    # canonical row order: mokapot's cross-validation folds follow the order in which spectra first appear, and
+    # Comet does not always return tied candidates in the same order
+    keys = [k for k in ("source_file", "scan", "precursor_idx", "peptide_sage", "charge", "rank", "proteins")
+            if k in df.columns]
+    work = df.sort_values(keys, kind="mergesort").reset_index(drop=True)  # mokapot indexes folds positionally via .loc
     X, cols = _features(work, feature_cols)
     work = work.copy()
     work["specid"] = np.arange(len(work))
@@ -72,7 +92,8 @@ def rescore_tda(df: pd.DataFrame, feature_cols=None, seed: int = 0) -> pd.DataFr
     mokapot_q = np.full(len(work), np.nan)
     for test_fdr in (0.01, 0.05, 0.10):
         try:
-            results, models = mokapot.brew(ds, test_fdr=test_fdr, max_workers=4, rng=seed)
+            results, models = mokapot.brew(ds, model=mokapot.PercolatorModel(rng=seed), test_fdr=test_fdr,
+                                           max_workers=MOKAPOT_WORKERS, rng=seed)
         except RuntimeError as e:  # "No PSMs found below the eval_fdr" on small/weak inputs
             log.warning("mokapot failed at test_fdr %.2f (%s); relaxing", test_fdr, e)
             continue

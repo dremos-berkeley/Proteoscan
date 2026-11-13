@@ -1,4 +1,118 @@
-# Status and known limitations (updated 2026-09-30)
+# Status and known limitations (updated 2026-11-13)
+
+## Current results (2026-11-13, branch feat/selective-linking-recal-repro)
+
+Everything in this section was produced by one code state (the first commit of that branch, bf1b3d6) with the
+default pipeline: per-entry precursor m/z (P4 fix), calibrated precursor search, all co-isolated entries with
+entry-context rescoring features, seeded cross-validated mokapot. Sections below this one are the project's
+history; their numbers predate these changes and are superseded where they overlap.
+
+### Ground truth: ProteomeTools synthetic pools (23 pools of PXD004732, pool 123 excluded)
+Same data, database and search parameters as the earlier benchmarks (configs/peaks_facility_human.yml for ion-trap
+scans, configs/peaks_hela_hcd_ft.yml for Orbitrap HCD); PEAKS Studio 13.5. Means per pool, each method at its own
+claimed 1% FDR; "at measured 1%" cuts each method's ranked list where its measured error reaches 1%.
+| scan type | method | PSMs | measured FDP | FDP without carry-over* | true peptides | true peptides at measured 1% |
+|---|---|---|---|---|---|---|
+| HCD ion trap | Proteoscan | 9,909 | 1.47% | 0.50% | 825 | 753 |
+| HCD ion trap | Proteoscan, fine-tuned fragment model | 10,373 | 1.45% | 0.46% | 844 | 773 |
+| HCD ion trap | PEAKS, DL boost on | 8,796 | 1.31% | 0.43% | 831 | 706 |
+| HCD ion trap | PEAKS, DL boost off | 7,659 | 0.98% | 0.19% | 800 | 742 |
+| CID ion trap | Proteoscan | 9,384 | 1.30% | 0.44% | 805 | 745 |
+| CID ion trap | Proteoscan, fine-tuned fragment model | 10,066 | 1.39% | 0.47% | 823 | 759 |
+| CID ion trap | PEAKS, DL boost on | 9,056 | 1.34% | 0.46% | 830 | 720 |
+| CID ion trap | PEAKS, DL boost off | 7,899 | 0.96% | 0.12% | 798 | 729 |
+| HCD Orbitrap | Proteoscan | 21,483 | 1.19% | 0.40% | 852 | 792 |
+| HCD Orbitrap | PEAKS, DL boost on | 18,049 | 0.94% | 0.28% | 841 | 781 |
+| HCD Orbitrap | PEAKS, DL boost off | 14,715 | 0.55% | 0.08% | 798 | 751 |
+
+*Two thirds of the PSMs counted as false, for every method (64-70%; 82-88% for PEAKS without boost), are peptides of
+another ProteomeTools pool: carry-over between consecutively acquired pools, real peptides that are not in this
+pool's truth list. The column removes them (pooled over the 23 pools). The truth table covers 365 pools, so the
+remaining figure still contains carry-over from pools outside it and ordinary contaminants; it is an upper bound on
+the error rate. Script: scripts/proteometools_false_breakdown.py.
+
+Pool by pool, true peptides, Proteoscan against PEAKS with boost: HCD ion trap higher in 11 pools, lower in 12
+(mean -5); CID ion trap 2 / 21 (mean -24); HCD Orbitrap 20 / 2 (mean +11). With the fine-tuned ion-trap fragment
+model (`--fragment-model peptdeep:...`, docs/IONTRAP_MODEL.md): HCD ion trap 20 / 3 (mean +13); CID ion trap 8 / 15
+(mean -7). Against the October benchmark of the same pools (before the P4 fix): HCD ion trap +11 (18 pools up, 4
+down), CID ion trap +1 (15 / 8), HCD Orbitrap +4 (19 / 3).
+
+Reading: on HCD scans Proteoscan is level with boosted PEAKS on ion-trap MS2 and about 1% ahead on Orbitrap MS2; on
+ion-trap CID it is 3% behind with the default fragment model (MS2PIP HCD2021, not a CID model) and 1% behind
+with the fine-tuned one. Proteoscan reports 4-19% more PSMs than PEAKS at a measured error that is higher
+on HCD (the additional PSMs are second identifications of co-isolated precursors: 409-1,879 per pool, measured FDP
+3.3-6.0% before removing carry-over, against 0.9-1.3% for the first PSM of a scan). Four pools (12, 42, 81, 114)
+show 1.5-7% "error" for every method including PEAKS without boost, which points at the pool or its truth list; on
+the other 19 pools the mean measured FDP is 0.90 / 0.79 / 0.69% for Proteoscan and 0.81 / 0.89 / 0.49% for boosted
+PEAKS (HCD-IT / CID-IT / HCD-OT).
+
+Deamidation artifact removed. The pools contain unmodified peptides, yet 8.7-11.5% of the October PSMs carried a
+deamidation; now 1.6-2.1% do (PEAKS 0.8-0.9%). Cause: at 15 ppm the 13C isotope peak of a peptide (+1.00335 Da)
+matches the same peptide deamidated (+0.98402 Da) with a 19 mDa error, i.e. 8-15 ppm for typical precursors. It is a
+right-sequence, wrong-modification error that target-decoy rescoring cannot learn to reject. The calibrated search
+(tolerance narrowed to max(5 ppm, 10 robust SD) after a quick estimation search, as MaxQuant and MSFragger do)
+excludes it.
+
+Benchmark report with figures: https://claude.ai/artifact/UfDyKywzNu2ib9wzAUmKvH (private link).
+Tables: /drive_a/drew/proteoscan-work/benchmarks/proteometools_2026-11-12/{SUMMARY_truth.md,SUMMARY_truth.csv,
+false_breakdown.csv}; fine-tuned model: proteometools_2026-11-12_finetuned/. Reproduce with
+scripts/run_proteometools_benchmark.sh and scripts/aggregate_proteometools.py --work.
+
+### Jurkat lysate against the facility's PEAKS export (DrewR_Adam_91526_DDA_OT_4, ion-trap HCD, turbo scan)
+PEAKS: 7,524 PSM rows, 3,472 peptides, 990 protein groups, 2.2 PSMs per peptide. Recall = share of PEAKS's
+identifications also reported by Proteoscan (PSM = scan + exact modified sequence + charge).
+| pipeline | PSM rows | peptides | protein groups | PSM recall | scan recall | peptide recall | protein-group recall | PSMs per peptide |
+|---|---|---|---|---|---|---|---|---|
+| before the P4 fix (trailer m/z) | 15,401 | 5,956 | | 0.788 | 0.830 | 0.861 | 0.927 | 2.6 |
+| P4 fix only (PR #2) | 28,982 | 6,717 | | 0.880 | 0.918 | 0.896 | 0.925 | 4.3 |
+| current default | 31,966 | 7,054 | 1,461 | 0.906 | 0.940 | 0.910 | 0.949 | 4.5 |
+| current, `feature_linking: primary` | 21,287 | 6,677 | 1,461 | 0.849 | 0.886 | 0.880 | 0.947 | 3.2 |
+The run's measured precursor error was +8.95 ppm (robust SD 0.31 ppm), removed automatically; searched tolerance
+5 ppm. Deamidated share of PSMs: 4.0% (PEAKS 4.2%; 13.9% with the offset removed but the tolerance left at 15 ppm).
+Two PEAKS runs of this file agree with each other on 67-90% of PSMs, so 0.91 is at the reference's own
+reproducibility. PEAKS's precision figures are low (21% of our PSMs are in PEAKS's list) because Proteoscan reports
+about twice the peptides and four times the PSMs.
+
+PSM and spectral counts are not comparable with PEAKS. PEAKS links only some co-isolated features to a scan (12% of
+other-species features, by a rule we could not recover from its exports, docs/PEAKS_PRECURSOR_RULES.md); Proteoscan
+links all of them by default and tells the rescorer which entry is the instrument's own precursor (`entry_primary`,
+`entry_area_frac`, `entry_n`). `feature_linking: primary` drops the co-isolated entries: a third fewer PSMs, about
+5% fewer peptides, lower agreement with PEAKS. Compare peptides and protein groups, not #Spec.
+
+### Error-rate control: paired two-pass entrapment (human + shuffled twins, FDP = 2E/N)
+| run | accepted PSMs | PSM FDP | sequences | entrapment sequences | sequence FDP (95% CI) | decoy sequences at threshold |
+|---|---|---|---|---|---|---|
+| HeLa 05_02, ion-trap HCD (PXD004940) | 64,659 | 0.57% | 40,468 | 174 | 0.86% (0.74-1.00) | 404 |
+| HeLa 03_02, Orbitrap HCD (PXD004940) | 42,382 | 0.78% | 31,273 | 154 | 0.98% (0.84-1.15) | 312 |
+| Jurkat OT_4, ion-trap HCD turbo | 28,298 | 0.54% | 6,118 | 45 | 1.47% (1.10-1.97) | 61 |
+The claim is 1% over distinct sequences. The two deep runs meet it. The Jurkat run does not at face value: 45
+entrapment sequences where the 61 decoys predict 30.5 (binomial p = 0.05; the same test gives p = 0.10 and 0.92 on
+the HeLa runs, in the other direction on the first). With one small run this is not distinguishable from sampling
+noise, but treat the sequence-level error of runs with a few thousand peptides as "1 to 1.5%", and use
+`peptide_fdr: 0.007` when a strict 1% is needed. PSM-level error is 0.5-0.8% in all three. PSMs on co-isolated
+entries: 0.5-1.3% FDP; second PSMs of a scan: 1.8-2.5%.
+
+### Reproducibility
+Two independent full runs of the Jurkat file give byte-identical export tables (all seven CSVs). The only
+difference in the intermediate table is `comet_sp_rank` in 5 of 340,416 rows (Comet's threads break a tie
+differently); it is not a rescoring feature. The earlier non-reproducibility was not threading: `mokapot.brew`
+builds its default `PercolatorModel()` without a seed, so the inner grid search shuffles differently on every
+call. The pipeline now passes a seeded model and sorts rows canonically. An output directory records a
+fingerprint of config, inputs, database and options; re-running it with anything changed is refused unless
+`--overwrite` is given (earlier, cached searches were silently reused).
+
+### Run time (shared server, 8 processes; under heavy load from parallel runs)
+ProteomeTools pool, one scan type: 7-19 min. Jurkat file (195k MS2 scans, semi-specific): 95 min, of which the
+calibration search is about 8 min.
+
+### Known limitations
+- Ion-trap CID with the default fragment model is 3% behind boosted PEAKS on synthetic peptides.
+- More PSMs per peptide than PEAKS (see above); second identifications of a scan carry a higher error than first ones.
+- Sequence-level error may reach about 1.5% on small runs (one run, borderline evidence).
+- The fine-tuned fragment models do not transfer to turbo-scan data (docs/IONTRAP_MODEL.md); MS2PIP stays the default.
+- De novo-only export, DIA and label-based quantification: unchanged (not concordant / not supported).
+
+# History (superseded where it overlaps with "Current results")
 
 Reference: DrewR_Adam_91526_DDA_OT_4 (Jurkat, Lumos, ion-trap HCD), PEAKS Studio, DL boost on:
 7,524 PSM rows / 3,472 peptides / 990 protein groups. Concordance = exact modified sequence,

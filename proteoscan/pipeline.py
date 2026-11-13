@@ -18,9 +18,11 @@ Every stage caches its output under --out and is skipped when the cache exists.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import pickle
+import shutil
 import time
 from pathlib import Path
 
@@ -29,7 +31,7 @@ import pandas as pd
 
 from dataclasses import replace as dataclasses_replace
 
-from .comet_search import fixed_mod_deltas, read_comet, run_comet
+from .comet_search import canonicalize_clipped_nterm, fixed_mod_deltas, read_comet, run_comet
 from .config import SearchConfig
 from .export_builder import apply_protein_mapping, assemble_export, build_peptides, build_psms
 from .fdr import threshold_summary
@@ -41,33 +43,72 @@ from .rescore_features import compute_features
 log = logging.getLogger("proteoscan.pipeline")
 
 
-def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: SearchConfig):
+def stage_precursors(mzml: Path, out: Path, features_path: str | None, cfg: SearchConfig,
+                     offset_ppm: float | None = None):
+    """Precursor entries and the expanded mzML of one run. The entries before any mass offset are cached in
+    precursors_raw.parquet, so a recalibrated search rewrites only the expanded mzML and precursors.parquet.
+    `offset_ppm` overrides cfg.precursor_mass_offset_ppm (automatic recalibration)."""
     from .precursors import (apply_precursor_offset, build_precursor_list, load_experiment, ms2_metadata,
                              write_expanded_mzml)
+    offset = float(cfg.precursor_mass_offset_ppm if offset_ppm is None else offset_ppm)
     ent_pq = out / "precursors.parquet"
+    raw_pq = out / "precursors_raw.parquet"
     exp_mzml = out / (mzml.stem + ".expanded.mzML")
     if ent_pq.exists() and exp_mzml.exists():
-        return pd.read_parquet(ent_pq), exp_mzml
+        cached = pd.read_parquet(ent_pq)
+        have = float(cached["offset_ppm"].iloc[0]) if "offset_ppm" in cached.columns and len(cached) else 0.0
+        if abs(have - offset) < 1e-9:
+            return cached, exp_mzml
     exp = load_experiment(mzml)
-    ms2 = ms2_metadata(exp)
-    feats = None
-    if features_path == "none":
-        feats = None
-    elif features_path:
-        feats = pd.read_parquet(features_path)
+    if raw_pq.exists():
+        entries = pd.read_parquet(raw_pq)
     else:
-        from .features import detect_features, load_config
-        fcfg = Path(__file__).resolve().parent / "data" / "features_lumos_120k.yml"
-        kw = {k: v for k, v in load_config(fcfg).items() if not k.startswith("ms2_")} if fcfg.exists() else {}
-        feats = detect_features(str(mzml), **kw)
-        feats.to_parquet(out / "ms1_features.parquet")
-    entries = build_precursor_list(exp, feats, ms2)
-    entries = apply_precursor_offset(entries, cfg.precursor_mass_offset_ppm)
-    entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
-    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=cfg.precursor_mass_offset_ppm,
+        ms2 = ms2_metadata(exp)
+        feats = None
+        if features_path == "none":
+            feats = None
+        elif features_path:
+            feats = pd.read_parquet(features_path)
+        elif (out / "ms1_features.parquet").exists():
+            feats = pd.read_parquet(out / "ms1_features.parquet")
+        else:
+            from .features import detect_features, load_config
+            fcfg = Path(__file__).resolve().parent / "data" / "features_lumos_120k.yml"
+            kw = {k: v for k, v in load_config(fcfg).items() if not k.startswith("ms2_")} if fcfg.exists() else {}
+            feats = detect_features(str(mzml), **kw)
+            feats.to_parquet(out / "ms1_features.parquet")
+        entries = build_precursor_list(exp, feats, ms2, feature_linking=cfg.feature_linking)
+        entries = entries.merge(ms2[["scan", "rt_min", "precursor_mz", "target_mz"]], on="scan", how="left")
+        entries.to_parquet(raw_pq)
+    entries = apply_precursor_offset(entries, offset)
+    entries = write_expanded_mzml(exp, entries, exp_mzml, precursor_offset_ppm=offset,
                                   precursor_mz_source=cfg.comet_precursor_mz_source)
+    entries["offset_ppm"] = offset
     entries.to_parquet(ent_pq)
     return entries, exp_mzml
+
+
+RECAL_MIN_PSMS = 200          # confident PSMs needed for an offset estimate
+RECAL_MIN_SHIFT_PPM = 1.0     # smaller estimated offsets are not worth a second search
+RECAL_SEARCH_TOL_PPM = 20.0   # the estimation search uses at least this precursor tolerance
+RECAL_TOL_SD = 10.0           # calibrated search tolerance = this many robust SDs of the precursor error ...
+RECAL_MIN_TOL_PPM = 5.0       # ... but at least this, and never more than the configured tolerance
+
+
+def estimate_precursor_offset(cands: pd.DataFrame) -> dict:
+    """Median precursor mass error (ppm, isotope error removed) of confident first-search PSMs: rank-1 targets
+    without isotope error and with a Comet E-value <= 0.01, or the best-scoring tenth when fewer than
+    RECAL_MIN_PSMS qualify. Returns offset_ppm (None when there are too few PSMs), n and a robust SD."""
+    c = cands[(cands["rank"] == 1) & (~cands["is_decoy"]) & (cands["isotope_error"] == 0)]
+    good = c[c["comet_evalue"] <= 0.01] if "comet_evalue" in c else c.iloc[0:0]
+    if len(good) < RECAL_MIN_PSMS:
+        good = c.nlargest(max(len(c) // 10, 1), "hyperscore") if len(c) else c
+    if len(good) < RECAL_MIN_PSMS:
+        return dict(offset_ppm=None, n=int(len(good)), robust_sd_ppm=None)
+    ppm = good["precursor_ppm"].to_numpy(float)
+    med = float(np.median(ppm))
+    mad = float(np.median(np.abs(ppm - med))) * 1.4826
+    return dict(offset_ppm=med, n=int(len(good)), robust_sd_ppm=mad)
 
 
 def _clipped_met_enzymatic(cfg: SearchConfig) -> bool:
@@ -88,7 +129,12 @@ def attach_entries(cands: pd.DataFrame, entries: pd.DataFrame) -> pd.DataFrame:
     c["feature_id"] = e["feature_id"].reindex(q).fillna(0).to_numpy().astype(int)
     c["feature_area"] = e["area"].reindex(q).to_numpy()
     c["entry_rt"] = e["rt"].reindex(q).to_numpy()
-    c["entry_mz"] = e["mz"].reindex(q).to_numpy()
+    # the m/z PEAKS prints for a PSM is the precursor entry's measured m/z; a search offset is not applied to it
+    c["entry_mz"] = (e["mz_uncal"] if "mz_uncal" in e else e["mz"]).reindex(q).to_numpy()
+    for col, src, default in (("entry_primary", "primary", 1), ("entry_area_frac", "area_frac", 0.0),
+                              ("entry_n", "n_entries", 1)):
+        if src in e:
+            c[col] = e[src].reindex(q).fillna(default).to_numpy(float)
     c["entry_source"] = e["source"].reindex(q).to_numpy()
     c["raw_rt"] = (e["rt_min"].reindex(q).to_numpy() if "rt_min" in e else c["rt"].to_numpy())
     c["raw_mz"] = (e["precursor_mz"].reindex(q).to_numpy() if "precursor_mz" in e else np.nan)
@@ -120,20 +166,28 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
         for x in str(p).split(";"):
             if not x.startswith("#DECOY#"):
                 ids.add(x.split()[0])
+    twin = cfg.entrapment_prefix
+    if twin:  # paired entrapment: every accepted protein brings its twin into the second pass
+        real = {i for i in ids if not i.startswith(twin)}
+        ids = real | {twin + i for i in real}
     sub_fasta = out / "pass1_proteins.fasta"
     with open(sub_fasta, "w") as fh:
         for h, seq in read_fasta(cfg.database):
             if h.split()[0] in ids:
                 fh.write(f">{h}\n{seq}\n")
-    cfg2 = dataclasses_replace(cfg, database=str(sub_fasta))
     parts = []
     for mzml in mzmls:
         rdir = out / mzml.stem
         entries = pd.read_parquet(rdir / "precursors.parquet")
         exp_mzml = rdir / (mzml.stem + ".expanded.mzML")
+        # same precursor window as the run's first pass (calibrated tolerance)
+        cfg2 = dataclasses_replace(cfg, database=str(sub_fasta),
+                                   parent_mass_error_tolerance_ppm=run_tolerance(out, mzml.name, cfg))
         txt = run_comet(cfg2, [exp_mzml], rdir / "comet_pass2", num_output_lines=candidates_per_spectrum + 2)[0]
         c2 = read_comet(txt, source_file=mzml.name, fixed_mods=fixed,
                         clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
+        if cfg.clip_nterm_methionine:
+            c2 = canonicalize_clipped_nterm(c2, cfg.database)
         c2["proteins"] = c2["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
         c2 = attach_entries(c2, entries)
         c2["rt"] = c2["raw_rt"].fillna(c2["rt"])
@@ -150,8 +204,8 @@ def stage_two_pass(feat: pd.DataFrame, cfg: SearchConfig, out: Path, mzmls: list
         both = rerank(pd.concat([old, new], ignore_index=True, sort=False), keep=candidates_per_spectrum + 2)
         parts.append(both)
     feat2 = pd.concat(parts, ignore_index=True, sort=False)
-    support, seqs = protein_support(acc1)
-    feat2 = add_protein_features(feat2, support, seqs)
+    support, seqs = protein_support(acc1, twin)
+    feat2 = add_protein_features(feat2, support, seqs, twin)
     if "log_prot_support" not in rf.FEATURE_COLUMNS:
         rf.FEATURE_COLUMNS.append("log_prot_support")
     feat2.to_parquet(pq)
@@ -231,10 +285,139 @@ def peaks_filter(top: pd.DataFrame, cfg: SearchConfig, psm_floor: float = 20.0):
     return acc[~acc["is_decoy"]].copy(), stats
 
 
+def calibrated_tolerance(configured_ppm: float, robust_sd_ppm: float | None) -> float:
+    """Precursor tolerance of the calibrated search: RECAL_TOL_SD robust SDs of the measured precursor error, at
+    least RECAL_MIN_TOL_PPM, never wider than the configured tolerance."""
+    if robust_sd_ppm is None:
+        return float(configured_ppm)
+    return float(min(configured_ppm, max(RECAL_MIN_TOL_PPM, RECAL_TOL_SD * robust_sd_ppm)))
+
+
+def run_tolerance(out: Path, run_name: str, cfg: SearchConfig) -> float:
+    """Precursor tolerance the first-pass search of `run_name` used (precursor_recalibration.json), so that the
+    second pass searches the same window."""
+    f = out / "precursor_recalibration.json"
+    if f.exists():
+        tol = json.loads(f.read_text()).get(run_name, {}).get("tolerance_ppm")
+        if tol:
+            return float(tol)
+    return float(cfg.parent_mass_error_tolerance_ppm)
+
+
+def search_run(mzml: Path, rdir: Path, features_path: str | None, cfg: SearchConfig, fixed: dict,
+               candidates_per_spectrum: int, t0: float) -> tuple[pd.DataFrame, dict]:
+    """Precursor entries and the first-pass Comet search of one run.
+
+    With `precursor_recalibration` "auto" or "offset" and no configured offset, a quick estimation search (fully
+    specific digest, one candidate per query, precursor tolerance at least RECAL_SEARCH_TOL_PPM) measures the
+    run's precursor mass error. An offset of at least RECAL_MIN_SHIFT_PPM is applied to the entries before the
+    real search, as PEAKS recalibrates precursor masses before its search; with "auto" the real search also uses
+    the calibrated tolerance (`calibrated_tolerance`). Returns the candidates and a record of offset and tolerance."""
+    def search(offset, tag, scfg=cfg, lines=candidates_per_spectrum):
+        entries, exp_mzml = stage_precursors(mzml, rdir, features_path, cfg, offset_ppm=offset)
+        log.info("%s: %d precursor entries, offset %.2f ppm (%.0fs)", mzml.name, len(entries), offset, time.time() - t0)
+        txt = run_comet(scfg, [exp_mzml], rdir / tag, num_output_lines=lines)[0]
+        c = read_comet(txt, source_file=mzml.name, fixed_mods=fixed, clipped_met_enzymatic=_clipped_met_enzymatic(scfg))
+        if cfg.clip_nterm_methionine:
+            c = canonicalize_clipped_nterm(c, cfg.database)
+        c["proteins"] = c["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
+        c = attach_entries(c, entries)
+        c["rt"] = c["raw_rt"].fillna(c["rt"])
+        return c
+
+    configured = float(cfg.precursor_mass_offset_ppm)
+    tol_cfg = float(cfg.parent_mass_error_tolerance_ppm)
+    if cfg.precursor_recalibration == "off" or configured:
+        return search(configured, "comet"), dict(offset_ppm=configured, source="config" if configured else "none",
+                                                 tolerance_ppm=tol_cfg)
+    est_tol = max(tol_cfg, RECAL_SEARCH_TOL_PPM)
+    est_cfg = dataclasses_replace(cfg, parent_mass_error_tolerance_ppm=est_tol, digest_mode="Specific")
+    est = estimate_precursor_offset(search(0.0, "comet_estimate", est_cfg, 1))
+    rec = dict(source="auto", estimate=est, estimation_tolerance_ppm=est_tol)
+    off = est["offset_ppm"]
+    if off is None:
+        log.warning("%s: too few confident PSMs (%d) to measure the precursor error; searching uncalibrated at "
+                    "%.1f ppm", mzml.name, est["n"], tol_cfg)
+        off = 0.0
+    elif abs(off) < RECAL_MIN_SHIFT_PPM:
+        log.info("%s: precursor offset %.2f ppm is below %.1f ppm; not shifting", mzml.name, off, RECAL_MIN_SHIFT_PPM)
+        off = 0.0
+    tol = calibrated_tolerance(tol_cfg, est["robust_sd_ppm"]) if cfg.precursor_recalibration == "auto" else tol_cfg
+    if est["offset_ppm"] is not None:
+        log.info("%s: precursor error %.2f ppm (n=%d, robust SD %.2f ppm); searching with offset %.2f ppm, "
+                 "tolerance %.1f ppm", mzml.name, est["offset_ppm"], est["n"], est["robust_sd_ppm"], off, tol)
+    rec.update(offset_ppm=off, tolerance_ppm=tol)
+    final_cfg = dataclasses_replace(cfg, parent_mass_error_tolerance_ppm=tol)
+    return search(off, "comet_recal" if off else "comet", final_cfg), rec
+
+
+CACHE_VERSION = 3   # bump when a cached stage changes meaning (2: per-entry precursor m/z, entry features;
+                    # 3: calibrated precursor tolerance, canonical protein N-terminus)
+CACHE_FILES = ("candidates_features.parquet", "candidates_features_2pass.parquet", "psms_scored.parquet",
+               "pass1_proteins.fasta", "precursor_recalibration.json")
+
+
+def cache_fingerprint(cfg: SearchConfig, mzmls: list[Path], features_path: str | None,
+                      candidates_per_spectrum: int, two_pass: bool, fragment_model: str) -> dict:
+    """Everything a cached stage depends on: the search configuration, the input files, the database and the
+    pipeline options. Thread counts are left out."""
+    def ident(p):
+        p = Path(p)
+        st = p.stat() if p.exists() else None
+        return dict(path=str(p.resolve()), size=st.st_size if st else None, mtime=int(st.st_mtime) if st else None)
+    conf = cfg.to_dict()
+    conf.pop("threads", None)
+    payload = dict(cache_version=CACHE_VERSION, config=conf, inputs=[ident(m) for m in mzmls],
+                   database=ident(cfg.database) if cfg.database else None,
+                   features=ident(features_path) if features_path not in (None, "none") else features_path,
+                   candidates=candidates_per_spectrum, two_pass=bool(two_pass), fragment_model=fragment_model)
+    payload["sha1"] = hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+    return payload
+
+
+def check_cache(out: Path, fp: dict, overwrite: bool = False) -> None:
+    """Refuse to reuse cached stages that were produced with another configuration or input (or by a pipeline
+    version without fingerprints); with `overwrite` delete them instead."""
+    f = out / "cache_fingerprint.json"
+    run_dirs = [d for d in out.iterdir() if d.is_dir() and any(d.glob("precursors*.parquet"))]
+    cached = [out / n for n in CACHE_FILES if (out / n).exists()]
+    old = json.loads(f.read_text()) if f.exists() else None
+    if old is not None and old.get("sha1") == fp["sha1"]:
+        return
+    if cached or run_dirs:
+        why = ("was written with a different configuration or input" if old is not None
+               else "has cached stages but no fingerprint (written before cache checks existed)")
+        if not overwrite:
+            diff = []
+            if old is not None:
+                for k in sorted(set(old.get("config", {})) | set(fp["config"])):
+                    if old.get("config", {}).get(k) != fp["config"].get(k):
+                        diff.append(f"{k}: {old.get('config', {}).get(k)!r} -> {fp['config'].get(k)!r}")
+                diff += [k for k in ("inputs", "database", "features", "candidates", "two_pass", "fragment_model",
+                                     "cache_version") if old.get(k) != fp.get(k)]
+            raise RuntimeError(f"{out} {why}; its cached search would be reused with the new settings. "
+                               f"Use a new output directory or --overwrite."
+                               + (f" Changed: {'; '.join(diff)}" if diff else ""))
+        same_input = old is not None and old.get("inputs") == fp["inputs"] and old.get("features") == fp["features"]
+        for c in cached:
+            c.unlink()
+        for d in run_dirs:
+            for pat in ("comet*", "precursors*.parquet", "*.expanded.mzML"):
+                for x in d.glob(pat):
+                    shutil.rmtree(x) if x.is_dir() else x.unlink()
+            if not same_input and (d / "ms1_features.parquet").exists():
+                (d / "ms1_features.parquet").unlink()
+        log.warning("%s: cached stages removed (--overwrite): %s", out, why)
+    f.write_text(json.dumps(fp, indent=2, default=str))
+
+
 def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", model_path: str | None = None,
         sample_name: str = "Sample 1", processes: int = 8, ref: str | None = None,
         features_path: str | None = None, candidates_per_spectrum: int = 3, two_pass: bool = True,
-        fragment_model: str = "HCD2021", summary: bool = True) -> dict:
+        fragment_model: str = "HCD2021", summary: bool = True, overwrite: bool = False,
+        cache_check: bool = True) -> dict:
+    """`overwrite` clears cached stages written with other settings or inputs (otherwise that is an error);
+    `cache_check=False` skips the comparison, for scripts that re-score copied stage tables on purpose."""
     out.mkdir(parents=True, exist_ok=True)
     try:  # lets `proteoscan.summary` find the search parameters of this run later
         cfg.to_yaml(out / "search_config.yml")
@@ -250,24 +433,22 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
             from .convert import raw_to_mzml
             p = raw_to_mzml(p, out / "mzml")
         mzmls.append(p)
+    if cache_check:
+        check_cache(out, cache_fingerprint(cfg, mzmls, features_path, candidates_per_spectrum, two_pass,
+                                           fragment_model), overwrite)
     if scored_pq.exists():
         feat = pd.read_parquet(scored_pq)
     else:
         parts = []
+        recal: dict = {}
         for mzml in mzmls:
             rdir = out / mzml.stem
             rdir.mkdir(parents=True, exist_ok=True)
-            entries, exp_mzml = stage_precursors(mzml, rdir, features_path, cfg)
-            log.info("%s: %d precursor entries (%.0fs)", mzml.name, len(entries), time.time() - t0)
-            txt = run_comet(cfg, [exp_mzml], rdir / "comet", num_output_lines=candidates_per_spectrum)[0]
-            cands = read_comet(txt, source_file=mzml.name, fixed_mods=fixed,
-                               clipped_met_enzymatic=_clipped_met_enzymatic(cfg))
-            cands["proteins"] = cands["proteins"].str.replace("DECOY_", "#DECOY#", regex=False)
-            cands = attach_entries(cands, entries)
-            cands["rt"] = cands["raw_rt"].fillna(cands["rt"])
+            cands, recal[mzml.name] = search_run(mzml, rdir, features_path, cfg, fixed, candidates_per_spectrum, t0)
             log.info("%s: %d candidates (%.0fs)", mzml.name, len(cands), time.time() - t0)
             parts.append(compute_features(cands, mzml, ms2pip_model=fragment_model,
                                           ms2_tolerance=cfg.fragment_mass_error_tolerance_da, processes=processes))
+        (out / "precursor_recalibration.json").write_text(json.dumps(recal, indent=2))
         feat = pd.concat(parts, ignore_index=True)
         feat.to_parquet(scored_pq)
     if two_pass:
@@ -282,6 +463,12 @@ def run(cfg: SearchConfig, inputs: list[Path], out: Path, mode: str = "tda", mod
     top.to_parquet(out / "psms_scored.parquet")
     accepted, fstats = peaks_filter(top, cfg)
     stats.update(fstats)
+    rj = out / "precursor_recalibration.json"
+    if rj.exists():  # per run: the precursor offset searched and where it came from
+        rec = json.loads(rj.read_text())
+        stats["precursor_offset_ppm"] = {k: v.get("offset_ppm") for k, v in rec.items()}
+        stats["precursor_offset_source"] = sorted({v.get("source") for v in rec.values()})
+        stats["precursor_tolerance_ppm"] = {k: v.get("tolerance_ppm") for k, v in rec.items()}
     accepted["rt"] = accepted["entry_rt"].fillna(accepted["rt"]) if "entry_rt" in accepted else accepted["rt"]
     psms_tbl = build_psms(accepted, cfg, sample_name)
     psms_tbl = apply_protein_mapping(psms_tbl, cfg.database)
@@ -346,6 +533,8 @@ def main(argv=None):
     ap.add_argument("--ref", help="PEAKS export dir to compare against")
     ap.add_argument("--single-pass", action="store_true", help="skip the protein-restricted second pass")
     ap.add_argument("--no-summary", action="store_true", help="do not write the PEAKS-style HTML pages")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="delete cached stages in --out that were produced with other settings or inputs")
     ap.add_argument("--fragment-model", default="HCD2021",
                     help="fragment-intensity predictor: an MS2PIP model name, or peptdeep:<ckpt> / "
                          "peptdeep:hcd=<ckpt>,cid=<ckpt> (docs/IONTRAP_MODEL.md)")
@@ -358,7 +547,7 @@ def main(argv=None):
         cfg.precursor_mass_offset_ppm = a.precursor_offset_ppm
     stats = run(cfg, [Path(m) for m in a.input], Path(a.out), a.mode, a.model, a.sample_name, a.processes,
                 a.ref, a.features, a.candidates, two_pass=not a.single_pass, fragment_model=a.fragment_model,
-                summary=not a.no_summary)
+                summary=not a.no_summary, overwrite=a.overwrite)
     print(json.dumps(stats, indent=2))
 
 

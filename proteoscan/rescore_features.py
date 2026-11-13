@@ -368,4 +368,7 @@ def compute_features(df: pd.DataFrame, mzml: str | Path, ms2pip_model: str = "HC
 FEATURE_COLUMNS = SAGE_FEATURES + ["n_mods", "n_ox", "n_deam", "len_per_mc",
                                    "len_per_mod", "abs_ppm", "log_scored_candidates",
                                    "ms2_corr", "ms2_cos", "ms2_frac_pred_found", "longest_b_obs", "longest_y_obs",
-                                   "n_ions_obs", "residue_coverage", "delta_rt", "abs_delta_rt"]
+                                   "n_ions_obs", "residue_coverage", "delta_rt", "abs_delta_rt",
+                                   # precursor-entry context (pipeline.attach_entries): is this query the instrument's own
+                                   # precursor or a co-isolated feature, its share of the linked feature area, entries of the scan
+                                   "entry_primary", "entry_area_frac", "entry_n"]

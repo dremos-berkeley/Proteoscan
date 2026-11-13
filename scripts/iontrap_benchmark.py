@@ -82,7 +82,7 @@ def run_one(job: dict) -> dict:
         prepare(src, out, mzml, job["spec"], Path(job["features_from"]) if job.get("features_from") else None)
         cfg = SearchConfig.from_yaml(job.get("config", CONFIG))
         run(cfg, [mzml], out, sample_name=f"{job['run']}.{job['type']}", processes=4, two_pass=True,
-            ref=job.get("ref"))
+            ref=job.get("ref"), cache_check=False)   # re-scores copied stage tables on purpose
     return evaluate(job)
 
 
